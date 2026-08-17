@@ -8,8 +8,8 @@ Bot Name: TeleDrive0313
 import asyncio
 import logging
 import os
-import sqlite3
 from datetime import datetime
+from pymongo import MongoClient
 
 from telegram import Update
 from telegram.ext import (
@@ -22,7 +22,9 @@ from telegram.ext import (
 
 # ============ CONFIG ============
 
-BOT_TOKEN = "8958248933:AAE_Xn4p7fQk-k0XvXLXG4T4WeTZYTIhwhw"
+BOT_TOKEN = "8958248933:AAELn0ciXF0j72D_rpcHcAqA7pb4zgYBkes"
+MONGO_URI = "mongodb+srv://TeleDrive0313_bot:<yoyoji..>@cluster0.xvifgpb.mongodb.net/?appName=Cluster0"
+
 GROUP_ID = -1004449101180
 
 TOPIC_IDS = {
@@ -32,7 +34,6 @@ TOPIC_IDS = {
 }
 
 IGNORE_THREAD_IDS = set(TOPIC_IDS.values())
-DB_PATH = "files.db"
 
 # ============ LOGGING ============
 
@@ -42,52 +43,32 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ============ DATABASE ============
+# ============ DATABASE (MongoDB) ============
 
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS files (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            file_type TEXT,
-            file_name TEXT,
-            caption TEXT,
-            thread_id INTEGER,
-            message_id INTEGER,
-            date TEXT
-        )
-        """
-    )
-    conn.commit()
-    conn.close()
+client = MongoClient(MONGO_URI)
+db = client["teledrive_db"]
+files_col = db["files"]
 
 def save_file_record(file_type, file_name, caption, thread_id, message_id):
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
-        "INSERT INTO files (file_type, file_name, caption, thread_id, message_id, date) VALUES (?, ?, ?, ?, ?, ?)",
-        (
-            file_type,
-            file_name or "",
-            caption or "",
-            thread_id,
-            message_id,
-            datetime.now().isoformat(),
-        ),
-    )
-    conn.commit()
-    conn.close()
+    record = {
+        "file_type": file_type,
+        "file_name": file_name or "",
+        "caption": caption or "",
+        "thread_id": thread_id,
+        "message_id": message_id,
+        "date": datetime.now().isoformat()
+    }
+    files_col.insert_one(record)
 
 def search_files(keyword):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.execute(
-        "SELECT file_type, file_name, caption, message_id, date FROM files "
-        "WHERE file_name LIKE ? OR caption LIKE ? ORDER BY id DESC LIMIT 20",
-        (f"%{keyword}%", f"%{keyword}%"),
-    )
-    rows = cur.fetchall()
-    conn.close()
-    return rows
+    query = {
+        "$or": [
+            {"file_name": {"$regex": keyword, "$options": "i"}},
+            {"caption": {"$regex": keyword, "$options": "i"}}
+        ]
+    }
+    results = files_col.find(query).sort("_id", -1).limit(20)
+    return list(results)
 
 # ============ HANDLERS ============
 
@@ -111,11 +92,11 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     lines = [f"🔍 '{keyword}' এর জন্য {len(results)}টা রেজাল্ট:\n"]
-    for file_type, file_name, caption, message_id, date in results:
-        date_str = date.split("T")[0]
-        lines.append(f"• [{file_type}] {file_name} — {date_str}")
-        if caption:
-            lines.append(f"   caption: {caption[:60]}")
+    for item in results:
+        date_str = item.get("date", "").split("T")[0]
+        lines.append(f"• [{item.get('file_type')}] {item.get('file_name')} — {date_str}")
+        if item.get("caption"):
+            lines.append(f"   caption: {item.get('caption')[:60]}")
 
     await update.message.reply_text("\n".join(lines))
 
@@ -176,7 +157,6 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ============ MAIN ============
 
 async def main():
-    init_db()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start_command))
@@ -193,10 +173,8 @@ async def main():
     await app.start()
     await app.updater.start_polling()
     
-    # Keeping the bot running continuously
     while True:
         await asyncio.sleep(3600)
 
 if __name__ == "__main__":
     asyncio.run(main())
-        
