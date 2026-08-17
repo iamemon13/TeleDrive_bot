@@ -22,7 +22,7 @@ from telegram.ext import (
 
 # ============ CONFIG ============
 
-BOT_TOKEN = "8958248933:AAELn0ciXF0j72D_rpcHcAqA7pb4zgYBkes"
+BOT_TOKEN = "8958248933:AAE_Xn4p7fQk-k0XvXLXG4T4WeTZYTIhwhw"
 GROUP_ID = -1004449101180
 
 TOPIC_IDS = {
