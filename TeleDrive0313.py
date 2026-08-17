@@ -26,7 +26,7 @@ from telegram.ext import (
 
 # ============ CONFIG ============
 
-BOT_TOKEN = "8958248933:AAGBfT1R5Jd8Nz5QjVeTby-eYn9GT-XG8Mc"
+BOT_TOKEN = "8958248933:AAE03gFkatEPQPzGf2l5nGiylU1AEKIczX0"
 
 DB_PASSWORD = quote_plus("yoyoji..") 
 MONGO_URI = f"mongodb+srv://TeleDrive0313_bot:{DB_PASSWORD}@cluster0.xvifgpb.mongodb.net/?appName=Cluster0"
