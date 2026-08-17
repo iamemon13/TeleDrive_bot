@@ -3,7 +3,7 @@ Telegram Drive Organizer Bot
 ------------------------------
 Developer: iamemon13
 Bot Name: TeleDrive0313
-Features: Multi-topic, MongoDB, Inline Search, Duplicate Check, Direct Link, Encryption & Backup
+Features: Multi-topic, MongoDB, Inline Search, Duplicate Check, Direct Link, Encryption & Weekly Auto-Forward Backup
 """
 
 import asyncio
@@ -11,7 +11,7 @@ import io
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from threading import Thread
 from urllib.parse import quote_plus
 from flask import Flask
@@ -36,6 +36,9 @@ MONGO_URI = f"mongodb+srv://TeleDrive0313_bot:{DB_PASSWORD}@cluster0.xvifgpb.mon
 
 GROUP_ID = -1004449101180
 CHANNEL_ID = -1004304201011
+
+# 📌 আপনার প্রাইভেট ব্যাকআপ চ্যানেলের আইডি এখানে দিন (যেখানে প্রতি সপ্তাহে ফাইলগুলো ফরওয়ার্ড হবে)
+BACKUP_CHANNEL_ID = -1004304201011  
 
 TOPIC_IDS = {
     "photo": 6,      # 📷 Photos topic id
@@ -120,6 +123,43 @@ def cipher_text(text, key, decrypt=False):
             result.append(char)
     return "".join(result)
 
+# ============ WEEKLY FORWARD BACKUP LOGIC ============
+
+async def perform_weekly_forward_backup(bot):
+    """বিগত ৭ দিনের নতুন ফাইলগুলো হ্যাশট্যাগ সহ প্রাইভেট ব্যাকআপ চ্যানেলে ফরওয়ার্ড করবে"""
+    one_week_ago = (datetime.now() - timedelta(days=7)).isoformat()
+    
+    # বিগত ৭ দিনের নতুন ফাইলগুলো ডাটাবেজ থেকে ফিল্টার করা
+    recent_files = list(files_col.find({"date": {"$gte": one_week_ago}}))
+    
+    if not recent_files:
+        logger.info("No new files found in the last 7 days for backup.")
+        return 0
+
+    count = 0
+    for item in recent_files:
+        msg_id = item.get("message_id")
+        if msg_id:
+            try:
+                # মূল গ্রুপ থেকে ব্যাকআপ চ্যানেলে ফাইল ফরওয়ার্ড করা
+                await bot.forward_message(
+                    chat_id=BACKUP_CHANNEL_ID,
+                    from_chat_id=GROUP_ID,
+                    message_id=msg_id
+                )
+                count += 1
+                await asyncio.sleep(1) # টেলিগ্রাম ফ্লাডিং এড়াতে ছোট বিরতি
+            except Exception as e:
+                logger.error(f"Failed to forward message id {msg_id}: {e}")
+
+    return count
+
+async def weekly_backup_job(context: ContextTypes.DEFAULT_TYPE):
+    """সাপ্তাহিক অটোমেটিক জব যা প্রতি ৭ দিন পরপর রান হবে"""
+    logger.info("Starting scheduled weekly auto-forward backup...")
+    count = await perform_weekly_forward_backup(context.bot)
+    logger.info(f"Weekly Auto-Forward Backup Completed. Total forwarded: {count} files.")
+
 # ============ HANDLERS ============
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -129,9 +169,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📌 কমান্ডসমূহ:\n"
             "• /search কিওয়ার্ড - ফাইল খুঁজুন\n"
             "• /stats - ড্রাইভের মোট ফাইলের হিসেব দেখুন\n"
+            "• /backup_now - বিগত ৭ দিনের নতুন ফাইলগুলো ব্যাকআপ চ্যানেলে ফরোয়ার্ড করুন\n"
             "• /encrypt পাসওয়ার্ড টেক্সট - টেক্সট লক করুন\n"
             "• /decrypt পাসওয়ার্ড টেক্সট - টেক্সট আনলক করুন\n"
-            "• /backup - ডাটাবেজের ব্যাকআপ ফাইল নিন\n"
             "• Inline Search: অন্য কোনো চ্যাটে `@TeleDrive0313_bot keyword` টাইপ করে ফাইল শেয়ার করুন।"
         )
 
@@ -155,22 +195,18 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-# Feature 3: Database Backup Handler
-async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Weekly Backup Manual Trigger Command (/backup_now)
+async def backup_now_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
 
-    records = list(files_col.find({}, {"_id": 0}))
-    json_data = json.dumps(records, indent=4)
+    await update.message.reply_text("🔄 বিগত ৭ দিনের নতুন ফাইলগুলো ব্যাকআপ চ্যানেলে ফরোয়ার্ড করা শুরু হচ্ছে...")
+    count = await perform_weekly_forward_backup(context.bot)
     
-    file_bytes = io.BytesIO(json_data.encode("utf-8"))
-    file_bytes.name = f"teledrive_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-
-    await update.message.reply_document(
-        document=file_bytes,
-        caption="🔒 **TeleDrive DB Auto-Backup Complete!**\nসব ফাইল তথ্যের ব্যাকআপ ফাইল সংযুক্ত করা হলো।",
-        parse_mode="Markdown"
-    )
+    if count > 0:
+        await update.message.reply_text(f"✅ ব্যাকআপ সফল! বিগত ৭ দিনের মোট {count} টি নতুন ফাইল ব্যাকআপ চ্যানেলে ফরোয়ার্ড করা হয়েছে।")
+    else:
+        await update.message.reply_text("ℹ️ বিগত ৭ দিনের মধ্যে ড্রাইভ বা গ্রুপে নতুন কোনো ফাইল আপলোড হয়নি।")
 
 # Feature 2: Encryption/Decryption Commands
 async def encrypt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -295,7 +331,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.warning("No topic configured for file_type=%s", file_type)
         return
 
-    # Phase 1: Category Hashtags Addition
+    # Phase 1: Category Hashtags Addition (#photo, #video ইত্যাদি সহ)
     hashtags = f"\n\n#{file_type} #TeleDrive"
     new_caption = (message.caption or "") + hashtags
 
@@ -342,9 +378,9 @@ async def main_async():
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("search", search_command))
     app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("backup_now", backup_now_command))
     app.add_handler(CommandHandler("encrypt", encrypt_command))
     app.add_handler(CommandHandler("decrypt", decrypt_command))
-    app.add_handler(CommandHandler("backup", backup_command))
     app.add_handler(InlineQueryHandler(inline_search))
     
     app.add_handler(
@@ -353,7 +389,15 @@ async def main_async():
         )
     )
 
-    logger.info("TeleDrive Bot with Encryption & Backup by iamemon13 starting...")
+    # 🗓️ অটোমেটিক সাপ্তাহিক ব্যাকআপ সিডিউলার (প্রতি ৭ দিন পর পর স্বয়ংক্রিয়ভাবে বিগত সপ্তাহের নতুন ফাইলগুলো ফরোয়ার্ড করবে)
+    if app.job_queue:
+        app.job_queue.run_repeating(
+            weekly_backup_job,
+            interval=604800,  # ৬৪৮০০ সেকেন্ড = ৭ দিন
+            first=15          # বট স্টার্ট হওয়ার ১৫ সেকেন্ড পর প্রথমবার চেক করবে
+        )
+
+    logger.info("TeleDrive Bot with Auto-Forward Weekly Backup by iamemon13 starting...")
 
     async with app:
         await app.initialize()
