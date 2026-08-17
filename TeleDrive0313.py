@@ -23,7 +23,7 @@ from telegram.ext import (
 
 # ============ CONFIG ============
 
-BOT_TOKEN = "8958248933:AAELn0ciXF0j72D_rpcHcAqA7pb4zgYBkes"
+BOT_TOKEN = "8958248933:AAGBfT1R5Jd8Nz5QjVeTby-eYn9GT-XG8Mc"
 
 # পাসওয়ার্ড ঠিক করা হয়েছে (yoyoji..)
 DB_PASSWORD = quote_plus("yoyoji..") 
