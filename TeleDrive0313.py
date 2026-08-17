@@ -25,12 +25,13 @@ from telegram.ext import (
 
 BOT_TOKEN = "8958248933:AAGBfT1R5Jd8Nz5QjVeTby-eYn9GT-XG8Mc"
 
-# পাসওয়ার্ড ঠিক করা হয়েছে (yoyoji..)
+# পাসওয়ার্ড ঠিক করা হয়েছে
 DB_PASSWORD = quote_plus("yoyoji..") 
 
 MONGO_URI = f"mongodb+srv://TeleDrive0313_bot:{DB_PASSWORD}@cluster0.xvifgpb.mongodb.net/?appName=Cluster0"
 
 GROUP_ID = -1004449101180
+CHANNEL_ID = -1004304201011
 
 TOPIC_IDS = {
     "photo": 6,      # 📷 Photos topic id
@@ -81,7 +82,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
         await update.message.reply_text(
             "TeleDrive Bot (Developed by @iamemon13) চালু আছে ✅\n"
-            "গ্রুপে ফাইল পাঠালে অটো সঠিক Topic এ চলে যাবে।\n"
+            "গ্রুপে ফাইল পাঠালে অটো সঠিক Topic ও Channel এ চলে যাবে।\n"
             "খুঁজতে চাইলে: /search কিওয়ার্ড"
         )
 
@@ -146,6 +147,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.warning("No topic configured for file_type=%s", file_type)
         return
 
+    # ১. নির্দিষ্ট Topic এ কপি করা
     copied = await context.bot.copy_message(
         chat_id=GROUP_ID,
         from_chat_id=GROUP_ID,
@@ -153,6 +155,18 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message_thread_id=target_thread,
     )
 
+    # ২. চ্যানেল এ কপি করা (Channel Upload)
+    try:
+        await context.bot.copy_message(
+            chat_id=CHANNEL_ID,
+            from_chat_id=GROUP_ID,
+            message_id=message.message_id,
+        )
+        logger.info("Uploaded %s to Channel", file_name)
+    except Exception as e:
+        logger.error("Failed to copy to channel: %s", e)
+
+    # ৩. MongoDB এ সেভ করা
     save_file_record(
         file_type=file_type,
         file_name=file_name,
