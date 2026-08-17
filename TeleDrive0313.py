@@ -3,9 +3,12 @@ Telegram Drive Organizer Bot
 ------------------------------
 Developer: iamemon13
 Bot Name: TeleDrive0313
+Features: Multi-topic, MongoDB, Inline Search, Duplicate Check, Direct Link, Encryption & Backup
 """
 
 import asyncio
+import io
+import json
 import logging
 import os
 from datetime import datetime
@@ -73,14 +76,14 @@ client = MongoClient(MONGO_URI)
 db = client["teledrive_db"]
 files_col = db["files"]
 
-# Phase 2: Duplicate Checker
+# Duplicate Checker
 def is_duplicate(file_name, caption):
     query = {"file_name": file_name}
     if caption:
         query["caption"] = caption
     return files_col.find_one(query) is not None
 
-def save_file_record(file_type, file_name, caption, thread_id, message_id, channel_msg_id=None):
+def save_file_record(file_type, file_name, caption, thread_id, message_id, channel_msg_id=None, encrypted=False):
     record = {
         "file_type": file_type,
         "file_name": file_name or "",
@@ -88,6 +91,7 @@ def save_file_record(file_type, file_name, caption, thread_id, message_id, chann
         "thread_id": thread_id,
         "message_id": message_id,
         "channel_msg_id": channel_msg_id,
+        "encrypted": encrypted,
         "date": datetime.now().isoformat()
     }
     files_col.insert_one(record)
@@ -102,6 +106,20 @@ def search_files(keyword):
     results = files_col.find(query).sort("_id", -1).limit(20)
     return list(results)
 
+# Feature 2: Simple Security Cipher for Sensitive Text
+def cipher_text(text, key, decrypt=False):
+    shift = sum(ord(c) for c in key) % 26
+    if decrypt:
+        shift = -shift
+    result = []
+    for char in text:
+        if char.isalpha():
+            start = ord('A') if char.isupper() else ord('a')
+            result.append(chr((ord(char) - start + shift) % 26 + start))
+        else:
+            result.append(char)
+    return "".join(result)
+
 # ============ HANDLERS ============
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -111,6 +129,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📌 কমান্ডসমূহ:\n"
             "• /search কিওয়ার্ড - ফাইল খুঁজুন\n"
             "• /stats - ড্রাইভের মোট ফাইলের হিসেব দেখুন\n"
+            "• /encrypt পাসওয়ার্ড টেক্সট - টেক্সট লক করুন\n"
+            "• /decrypt পাসওয়ার্ড টেক্সট - টেক্সট আনলক করুন\n"
+            "• /backup - ডাটাবেজের ব্যাকআপ ফাইল নিন\n"
             "• Inline Search: অন্য কোনো চ্যাটে `@TeleDrive0313_bot keyword` টাইপ করে ফাইল শেয়ার করুন।"
         )
 
@@ -133,6 +154,46 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📁 Total Files: {total_files}"
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
+
+# Feature 3: Database Backup Handler
+async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+
+    records = list(files_col.find({}, {"_id": 0}))
+    json_data = json.dumps(records, indent=4)
+    
+    file_bytes = io.BytesIO(json_data.encode("utf-8"))
+    file_bytes.name = f"teledrive_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+
+    await update.message.reply_document(
+        document=file_bytes,
+        caption="🔒 **TeleDrive DB Auto-Backup Complete!**\nসব ফাইল তথ্যের ব্যাকআপ ফাইল সংযুক্ত করা হলো।",
+        parse_mode="Markdown"
+    )
+
+# Feature 2: Encryption/Decryption Commands
+async def encrypt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or len(context.args) < 2:
+        await update.message.reply_text("ব্যবহার: /encrypt <পাসওয়ার্ড> <আপনার গোপন তথ্য>")
+        return
+    
+    key = context.args[0]
+    raw_text = " ".join(context.args[1:])
+    encrypted = cipher_text(raw_text, key)
+    
+    await update.message.reply_text(f"🔐 **Encrypted Data:**\n`{encrypted}`", parse_mode="Markdown")
+
+async def decrypt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or len(context.args) < 2:
+        await update.message.reply_text("ব্যবহার: /decrypt <পাসওয়ার্ড> <লক করা টেক্সট>")
+        return
+    
+    key = context.args[0]
+    ciphered_text = " ".join(context.args[1:])
+    decrypted = cipher_text(ciphered_text, key, decrypt=True)
+    
+    await update.message.reply_text(f"🔓 **Decrypted Data:**\n{decrypted}")
 
 async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -280,8 +341,11 @@ async def main_async():
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("search", search_command))
-    app.add_handler(CommandHandler("stats", stats_command)) # Phase 1
-    app.add_handler(InlineQueryHandler(inline_search))       # Phase 2
+    app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("encrypt", encrypt_command))
+    app.add_handler(CommandHandler("decrypt", decrypt_command))
+    app.add_handler(CommandHandler("backup", backup_command))
+    app.add_handler(InlineQueryHandler(inline_search))
     
     app.add_handler(
         MessageHandler(
@@ -289,7 +353,7 @@ async def main_async():
         )
     )
 
-    logger.info("TeleDrive Bot with All Features by iamemon13 starting...")
+    logger.info("TeleDrive Bot with Encryption & Backup by iamemon13 starting...")
 
     async with app:
         await app.initialize()
