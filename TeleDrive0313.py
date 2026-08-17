@@ -9,6 +9,7 @@ import asyncio
 import logging
 import os
 from datetime import datetime
+from urllib.parse import quote_plus
 from pymongo import MongoClient
 
 from telegram import Update
@@ -23,7 +24,11 @@ from telegram.ext import (
 # ============ CONFIG ============
 
 BOT_TOKEN = "8958248933:AAELn0ciXF0j72D_rpcHcAqA7pb4zgYBkes"
-MONGO_URI = "mongodb+srv://TeleDrive0313_bot:<yoyoji..>@cluster0.xvifgpb.mongodb.net/?appName=Cluster0"
+
+# পাসওয়ার্ড ঠিক করা হয়েছে (yoyoji..)
+DB_PASSWORD = quote_plus("yoyoji..") 
+
+MONGO_URI = f"mongodb+srv://TeleDrive0313_bot:{DB_PASSWORD}@cluster0.xvifgpb.mongodb.net/?appName=Cluster0"
 
 GROUP_ID = -1004449101180
 
@@ -73,13 +78,17 @@ def search_files(keyword):
 # ============ HANDLERS ============
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "TeleDrive Bot (Developed by @iamemon13) চালু আছে ✅\n"
-        "গ্রুপে ফাইল পাঠালে অটো সঠিক Topic এ চলে যাবে।\n"
-        "খুঁজতে চাইলে: /search কিওয়ার্ড"
-    )
+    if update.message:
+        await update.message.reply_text(
+            "TeleDrive Bot (Developed by @iamemon13) চালু আছে ✅\n"
+            "গ্রুপে ফাইল পাঠালে অটো সঠিক Topic এ চলে যাবে।\n"
+            "খুঁজতে চাইলে: /search কিওয়ার্ড"
+        )
 
 async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+
     if not context.args:
         await update.message.reply_text("ব্যবহার: /search কিওয়ার্ড\nযেমন: /search cv")
         return
@@ -153,9 +162,10 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     logger.info("Organized %s -> topic %s", file_name, target_thread)
+
 # ============ MAIN ============
 
-def main():
+async def main_async():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start_command))
@@ -167,11 +177,14 @@ def main():
     )
 
     logger.info("TeleDrive Bot by iamemon13 starting...")
-    
-    # run_polling ব্যবহার করলে রেন্ডারে Timed Out সমস্যা হবে না
-    app.run_polling(drop_pending_updates=True)
+
+    # Async lifecycle for Python 3.12 & Render deployment
+    async with app:
+        await app.initialize()
+        await app.start()
+        await app.updater.start_polling(drop_pending_updates=True)
+        await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main_async())
     
-
