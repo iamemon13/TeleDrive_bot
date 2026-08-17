@@ -1,2 +1,4 @@
-python-telegram-bot==21.4
-pymongo[srv]==4.8.0
+python-telegram-bot
+pymongo
+dnspython
+flask
