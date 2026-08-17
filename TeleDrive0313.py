@@ -153,10 +153,9 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     logger.info("Organized %s -> topic %s", file_name, target_thread)
-
 # ============ MAIN ============
 
-async def main():
+def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start_command))
@@ -169,12 +168,10 @@ async def main():
 
     logger.info("TeleDrive Bot by iamemon13 starting...")
     
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
-    
-    while True:
-        await asyncio.sleep(3600)
+    # run_polling ব্যবহার করলে রেন্ডারে Timed Out সমস্যা হবে না
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
+    
+
