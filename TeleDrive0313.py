@@ -14,12 +14,13 @@ from urllib.parse import quote_plus
 from flask import Flask
 from pymongo import MongoClient
 
-from telegram import Update
+from telegram import Update, InlineQueryResultArticle, InputTextMessageContent
 from telegram.ext import (
     ApplicationBuilder,
     ContextTypes,
     MessageHandler,
     CommandHandler,
+    InlineQueryHandler,
     filters,
 )
 
@@ -27,9 +28,7 @@ from telegram.ext import (
 
 BOT_TOKEN = "8958248933:AAGBfT1R5Jd8Nz5QjVeTby-eYn9GT-XG8Mc"
 
-# পাসওয়ার্ড ঠিক করা হয়েছে
 DB_PASSWORD = quote_plus("yoyoji..") 
-
 MONGO_URI = f"mongodb+srv://TeleDrive0313_bot:{DB_PASSWORD}@cluster0.xvifgpb.mongodb.net/?appName=Cluster0"
 
 GROUP_ID = -1004449101180
@@ -74,13 +73,21 @@ client = MongoClient(MONGO_URI)
 db = client["teledrive_db"]
 files_col = db["files"]
 
-def save_file_record(file_type, file_name, caption, thread_id, message_id):
+# Phase 2: Duplicate Checker
+def is_duplicate(file_name, caption):
+    query = {"file_name": file_name}
+    if caption:
+        query["caption"] = caption
+    return files_col.find_one(query) is not None
+
+def save_file_record(file_type, file_name, caption, thread_id, message_id, channel_msg_id=None):
     record = {
         "file_type": file_type,
         "file_name": file_name or "",
         "caption": caption or "",
         "thread_id": thread_id,
         "message_id": message_id,
+        "channel_msg_id": channel_msg_id,
         "date": datetime.now().isoformat()
     }
     files_col.insert_one(record)
@@ -100,10 +107,32 @@ def search_files(keyword):
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
         await update.message.reply_text(
-            "TeleDrive Bot (Developed by @iamemon13) চালু আছে ✅\n"
-            "গ্রুপে ফাইল পাঠালে অটো সঠিক Topic ও Channel এ চলে যাবে।\n"
-            "খুঁজতে চাইলে: /search কিওয়ার্ড"
+            "TeleDrive Bot (Developed by @iamemon13) চালু আছে ✅\n\n"
+            "📌 কমান্ডসমূহ:\n"
+            "• /search কিওয়ার্ড - ফাইল খুঁজুন\n"
+            "• /stats - ড্রাইভের মোট ফাইলের হিসেব দেখুন\n"
+            "• Inline Search: অন্য কোনো চ্যাটে `@TeleDrive0313_bot keyword` টাইপ করে ফাইল শেয়ার করুন।"
         )
+
+# Phase 1: Statistics Command
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+
+    total_files = files_col.count_documents({})
+    photos = files_col.count_documents({"file_type": "photo"})
+    videos = files_col.count_documents({"file_type": "video"})
+    documents = files_col.count_documents({"file_type": "document"})
+
+    msg = (
+        "📊 **TeleDrive Storage Statistics**\n\n"
+        f"📷 Photos: {photos}\n"
+        f"🎥 Videos: {videos}\n"
+        f"📄 Documents: {documents}\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"📁 Total Files: {total_files}"
+    )
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
 async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -123,11 +152,45 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = [f"🔍 '{keyword}' এর জন্য {len(results)}টা রেজাল্ট:\n"]
     for item in results:
         date_str = item.get("date", "").split("T")[0]
-        lines.append(f"• [{item.get('file_type')}] {item.get('file_name')} — {date_str}")
+        # Phase 3: Channel Link Generation
+        clean_channel_id = str(CHANNEL_ID).replace("-100", "")
+        link = f"https://t.me/c/{clean_channel_id}/{item.get('channel_msg_id')}" if item.get('channel_msg_id') else "#"
+        
+        lines.append(f"• [{item.get('file_type')}] [{item.get('file_name')}]({link}) — {date_str}")
         if item.get("caption"):
             lines.append(f"   caption: {item.get('caption')[:60]}")
 
-    await update.message.reply_text("\n".join(lines))
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown", disable_web_page_preview=True)
+
+# Phase 2: Inline Search Feature
+async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.inline_query.query
+    if not query:
+        return
+
+    results = search_files(query)
+    inline_results = []
+
+    for item in results:
+        clean_channel_id = str(CHANNEL_ID).replace("-100", "")
+        link = f"https://t.me/c/{clean_channel_id}/{item.get('channel_msg_id')}" if item.get('channel_msg_id') else "#"
+        
+        content = (
+            f"📁 **File:** {item.get('file_name')}\n"
+            f"📌 **Type:** {item.get('file_type')}\n"
+            f"🔗 **Link:** [Open in Channel]({link})"
+        )
+        
+        inline_results.append(
+            InlineQueryResultArticle(
+                id=str(item.get("_id")),
+                title=f"[{item.get('file_type').upper()}] {item.get('file_name')}",
+                description=item.get("caption") or "TeleDrive File",
+                input_message_content=InputTextMessageContent(content, parse_mode="Markdown", disable_web_page_preview=True)
+            )
+        )
+
+    await update.inline_query.answer(inline_results[:10])
 
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.effective_message
@@ -161,10 +224,19 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         return
 
+    # Phase 2: Duplicate Check Verification
+    if is_duplicate(file_name, message.caption):
+        logger.info("Duplicate file skipped: %s", file_name)
+        return
+
     target_thread = TOPIC_IDS.get(file_type)
     if target_thread is None:
         logger.warning("No topic configured for file_type=%s", file_type)
         return
+
+    # Phase 1: Category Hashtags Addition
+    hashtags = f"\n\n#{file_type} #TeleDrive"
+    new_caption = (message.caption or "") + hashtags
 
     # ১. নির্দিষ্ট Topic এ কপি করা
     copied = await context.bot.copy_message(
@@ -172,26 +244,31 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from_chat_id=GROUP_ID,
         message_id=message.message_id,
         message_thread_id=target_thread,
+        caption=new_caption
     )
 
     # ২. চ্যানেল এ কপি করা (Channel Upload)
+    channel_msg_id = None
     try:
-        await context.bot.copy_message(
+        channel_copied = await context.bot.copy_message(
             chat_id=CHANNEL_ID,
             from_chat_id=GROUP_ID,
             message_id=message.message_id,
+            caption=new_caption
         )
+        channel_msg_id = channel_copied.message_id
         logger.info("Uploaded %s to Channel", file_name)
     except Exception as e:
         logger.error("Failed to copy to channel: %s", e)
 
-    # ৩. MongoDB এ সেভ করা
+    # ৩. MongoDB এ সেভ করা (Phase 3 Link ID সহ)
     save_file_record(
         file_type=file_type,
         file_name=file_name,
         caption=message.caption,
         thread_id=target_thread,
         message_id=copied.message_id,
+        channel_msg_id=channel_msg_id
     )
 
     logger.info("Organized %s -> topic %s", file_name, target_thread)
@@ -203,13 +280,16 @@ async def main_async():
 
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("search", search_command))
+    app.add_handler(CommandHandler("stats", stats_command)) # Phase 1
+    app.add_handler(InlineQueryHandler(inline_search))       # Phase 2
+    
     app.add_handler(
         MessageHandler(
             filters.PHOTO | filters.VIDEO | filters.Document.ALL, handle_file
         )
     )
 
-    logger.info("TeleDrive Bot by iamemon13 starting...")
+    logger.info("TeleDrive Bot with All Features by iamemon13 starting...")
 
     async with app:
         await app.initialize()
