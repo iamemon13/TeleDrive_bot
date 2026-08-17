@@ -5,6 +5,7 @@ Developer: iamemon13
 Bot Name: TeleDrive0313
 """
 
+import asyncio
 import logging
 import os
 import sqlite3
@@ -174,7 +175,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ============ MAIN ============
 
-def main():
+async def main():
     init_db()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
@@ -187,8 +188,15 @@ def main():
     )
 
     logger.info("TeleDrive Bot by iamemon13 starting...")
-    app.run_polling()
+    
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+    
+    # Keeping the bot running continuously
+    while True:
+        await asyncio.sleep(3600)
 
 if __name__ == "__main__":
-    main()
-  
+    asyncio.run(main())
+        
