@@ -9,7 +9,9 @@ import asyncio
 import logging
 import os
 from datetime import datetime
+from threading import Thread
 from urllib.parse import quote_plus
+from flask import Flask
 from pymongo import MongoClient
 
 from telegram import Update
@@ -40,6 +42,23 @@ TOPIC_IDS = {
 }
 
 IGNORE_THREAD_IDS = set(TOPIC_IDS.values())
+
+# ============ RENDER KEEP ALIVE SERVER ============
+
+app_flask = Flask('')
+
+@app_flask.route('/')
+def home():
+    return "TeleDrive Bot is running alive!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    app_flask.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run_flask)
+    t.daemon = True
+    t.start()
 
 # ============ LOGGING ============
 
@@ -192,7 +211,6 @@ async def main_async():
 
     logger.info("TeleDrive Bot by iamemon13 starting...")
 
-    # Async lifecycle for Python 3.12 & Render deployment
     async with app:
         await app.initialize()
         await app.start()
@@ -200,5 +218,6 @@ async def main_async():
         await asyncio.Event().wait()
 
 if __name__ == "__main__":
+    keep_alive()  # Render Web Service-এর জন্য ব্যাকগ্রাউন্ড পোর্ট ওপেন থাকবে
     asyncio.run(main_async())
     
