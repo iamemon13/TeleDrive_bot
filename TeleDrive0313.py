@@ -90,20 +90,47 @@ def whatsapp_webhook():
                         if msg_type == 'text':
                             message_body = message.get('text', {}).get('body')
                             if sender_phone and message_body:
-                                # হোয়াটসঅ্যাপে অটো-রিপ্লাই পাঠানো
                                 send_whatsapp_message(sender_phone, f"Hello! Received your text: {message_body}")
-                                # টেলিগ্রাম গ্রুপেও ফরোয়ার্ড করা
                                 send_to_telegram_group(f"📱 WhatsApp থেকে প্রাপ্ত টেক্সট:\n{message_body}")
                         
-                        # ২. যদি ডকুমেন্ট বা মিডিয়া ফাইল হয়
-                        elif msg_type in ['document', 'image', 'video']:
-                            send_whatsapp_message(sender_phone, "ফাইলটি পাওয়া গেছে! টেলিগ্রাম ড্রাইভে ফরোয়ার্ড করা হচ্ছে...")
-                            send_to_telegram_group(f"📱 WhatsApp থেকে একটি নতুন {msg_type} ফাইল আপলোড করা হয়েছে। (নম্বর: {sender_phone})")
+                        # ২. যদি ছবি (image) হয়
+                        elif msg_type == 'image':
+                            image_data = message.get('image', {})
+                            media_id = image_data.get('id')
+                            caption = image_data.get('caption', '')
+                            if media_id:
+                                file_url = get_whatsapp_media_url(media_id)
+                                if file_url:
+                                    send_whatsapp_message(sender_phone, "ছবিটি পাওয়া গেছে! টেলিগ্রাম ড্রাইভে পাঠানো হচ্ছে...")
+                                    send_photo_to_telegram(file_url, f"📱 WhatsApp Photo (নম্বর: {sender_phone})\n{caption}")
+                        
+                        # ৩. যদি ডকুমেন্ট বা ভিডিও হয়
+                        elif msg_type in ['document', 'video']:
+                            media_data = message.get(msg_type, {})
+                            media_id = media_data.get('id')
+                            caption = media_data.get('caption', '')
+                            if media_id:
+                                file_url = get_whatsapp_media_url(media_id)
+                                if file_url:
+                                    send_whatsapp_message(sender_phone, "ফাইলটি পাওয়া গেছে! টেলিগ্রাম ড্রাইভে পাঠানো হচ্ছে...")
+                                    send_to_telegram_group(f"📱 WhatsApp থেকে একটি {msg_type} এসেছে। (নম্বর: {sender_phone})\nলিংক: {file_url}\n{caption}")
 
         except Exception as e:
             logger.error(f"Error processing WhatsApp message: {e}")
 
         return jsonify({"status": "success"}), 200
+
+def get_whatsapp_media_url(media_id):
+    """মেটার সার্ভার থেকে মিডিয়ার ডাউনলোডেবল লিংক বের করার ফাংশন"""
+    url = f"https://graph.facebook.com/v22.0/{media_id}"
+    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
+    try:
+        response = requests.get(url, headers=headers)
+        res_json = response.json()
+        return res_json.get("url")
+    except Exception as e:
+        logger.error(f"Failed to get media URL: {e}")
+        return None
 
 def send_whatsapp_message(recipient_phone, text_message):
     url = f"https://graph.facebook.com/v22.0/{PHONE_NUMBER_ID}/messages"
@@ -123,7 +150,7 @@ def send_whatsapp_message(recipient_phone, text_message):
         logger.error(f"Failed to send WhatsApp message: {e}")
 
 def send_to_telegram_group(text):
-    """হোয়াটসঅ্যাপের ডেটা সরাসরি টেলিগ্রাম গ্রুপে পাঠানোর ফাংশন"""
+    """হোয়াটসঅ্যাপের টেক্সট সরাসরি টেলিগ্রাম গ্রুপে পাঠানোর ফাংশন"""
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": GROUP_ID,
@@ -133,6 +160,21 @@ def send_to_telegram_group(text):
         requests.post(url, json=payload)
     except Exception as e:
         logger.error(f"Failed to send to Telegram group: {e}")
+
+def send_photo_to_telegram(photo_url, caption):
+    """হোয়াটসঅ্যাপের ছবি সরাসরি টেলিগ্রাম গ্রুপের Photo টপিকে পাঠানোর ফাংশন"""
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+    photo_topic_id = TOPIC_IDS.get("photo", 6)
+    payload = {
+        "chat_id": GROUP_ID,
+        "message_thread_id": photo_topic_id,
+        "photo": photo_url,
+        "caption": caption
+    }
+    try:
+        requests.post(url, json=payload)
+    except Exception as e:
+        logger.error(f"Failed to send photo to Telegram group: {e}")
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
@@ -467,4 +509,3 @@ async def main_async():
 if __name__ == "__main__":
     keep_alive()  # ফ্লাস্ক সার্ভার, ওয়েব হুক এবং টেলিগ্রাম বট একসঙ্গে চালু রাখবে
     asyncio.run(main_async())
-    
