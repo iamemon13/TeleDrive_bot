@@ -40,7 +40,8 @@ TOPIC_IDS = {
     "document": 12,  # 📄 Documents topic id
 }
 
-IGNORE_THREAD_IDS = set(TOPIC_IDS.values())
+# ইগনোর লিস্ট খালি রাখা হয়েছে, যাতে যেকোনো টপিক বা জেনারেল থেকে ফাইল দিলে কাজ করে
+IGNORE_THREAD_IDS = set()
 
 # ============ RENDER KEEP ALIVE SERVER ============
 
@@ -244,11 +245,20 @@ async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.effective_message
-    if message is None or message.chat_id != GROUP_ID or message.message_thread_id in IGNORE_THREAD_IDS: return
+    if message is None or message.chat_id != GROUP_ID: 
+        return
+
+    # বট নিজের তৈরি করা মেসেজ রিপ্রসেস করবে না (লুপ এড়াতে)
+    if message.from_user and message.from_user.is_bot:
+        return
 
     file_type = "photo" if message.photo else "video" if message.video else "document"
     target_thread = TOPIC_IDS.get(file_type, 12)
     
+    # যদি মেসেজটি ইতিমধ্যে সঠিক টার্গেট থ্রেডে বা টপিকে থাকে, তবে সেটি পুনরায় কপি করার দরকার নেই
+    if message.message_thread_id == target_thread:
+        return
+
     copied = await context.bot.copy_message(
         chat_id=GROUP_ID,
         from_chat_id=GROUP_ID,
@@ -282,7 +292,7 @@ async def main_async():
     if app.job_queue:
         app.job_queue.run_repeating(weekly_backup_job, interval=604800, first=15)
 
-    print("TeleDrive Bot with delete & backup fix is running...")
+    print("TeleDrive Bot with multi-topic file routing is running...")
     async with app:
         await app.initialize()
         await app.start()
@@ -291,3 +301,4 @@ async def main_async():
 
 if __name__ == "__main__":
     asyncio.run(main_async())
+    
