@@ -28,21 +28,22 @@ from telegram.ext import (
     filters,
 )
 
-# ============ CONFIG ============
+# ============ CONFIG (Environment Variables থেকে লোড হবে) ============
 
-BOT_TOKEN = "8958248933:AAE03gFkatEPQPzGf2l5nGiylU1AEKIczX0"
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
-DB_PASSWORD = quote_plus("yoyoji..") 
-MONGO_URI = f"mongodb+srv://TeleDrive0313_bot:{DB_PASSWORD}@cluster0.xvifgpb.mongodb.net/?appName=Cluster0"
+db_password_raw = os.environ.get("DB_PASSWORD", "yoyoji..")
+DB_PASSWORD = quote_plus(db_password_raw) 
+MONGO_URI = os.environ.get("MONGO_URI") or f"mongodb+srv://TeleDrive0313_bot:{DB_PASSWORD}@cluster0.xvifgpb.mongodb.net/?appName=Cluster0"
 
 GROUP_ID = -1004449101180
 CHANNEL_ID = -1004304201011
 BACKUP_CHANNEL_ID = -1004304201011  
 
-# WhatsApp Config (আপনার দেওয়া পুরনো টোকেন ও আইডি থেকে প্রাপ্ত)
-WHATSAPP_TOKEN = 'EAAWeZAG4KXLEBSXmlJ0b0iyKtZAuljh0kXjKyoJuQlF5icofobM6ZAwGlZAhclcOKsoVPtZA7ZBYvJZB2WraVVnFI67oxWWTIpK39YRMlmn6Ej63gvaxBKR9NuogTZBs0edbyzq8Mu2TpNKr10CGnM1TCvFTVnGrPLZCHB0oa48j1VPqKK2WkwZA0H8UeoDZCguXwZDZD'
-PHONE_NUMBER_ID = '1355197357667326'
-VERIFY_TOKEN = 'yoyoji..'
+# WhatsApp Config (Environment Variables থেকে লোড হবে)
+WHATSAPP_TOKEN = os.environ.get("WHATSAPP_TOKEN")
+PHONE_NUMBER_ID = os.environ.get("PHONE_NUMBER_ID")
+VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN", "yoyoji..")
 
 TOPIC_IDS = {
     "photo": 6,      # 📷 Photos topic id
@@ -466,4 +467,4 @@ async def main_async():
 if __name__ == "__main__":
     keep_alive()  # ফ্লাস্ক সার্ভার, ওয়েব হুক এবং টেলিগ্রাম বট একসঙ্গে চালু রাখবে
     asyncio.run(main_async())
-        
+    
