@@ -269,6 +269,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target_thread = TOPIC_IDS.get(file_type, 12)
     
     saved_message_id = message.message_id
+    new_caption = (message.caption or "") + f"\n\n#{file_type} #TeleDrive"
     
     if current_thread != target_thread:
         try:
@@ -277,15 +278,28 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 from_chat_id=GROUP_ID,
                 message_id=message.message_id,
                 message_thread_id=target_thread,
-                caption=(message.caption or "") + f"\n\n#{file_type} #TeleDrive"
+                caption=new_caption
             )
             saved_message_id = copied.message_id
         except Exception as e:
             logger.error(f"Failed to copy message to target thread: {e}")
 
+    channel_msg_id = None
     try:
-        c_copied = await context.bot.copy_message(chat_id=CHANNEL_ID, from_chat_id=GROUP_ID, message_id=message.message_id)
-        save_file_record(file_type, file_name, message.caption, target_thread, saved_message_id, c_copied.message_id)
+        if message.photo:
+            file_id = message.photo[-1].file_id
+            sent_channel_msg = await context.bot.send_photo(chat_id=CHANNEL_ID, photo=file_id, caption=new_caption)
+            channel_msg_id = sent_channel_msg.message_id
+        elif message.video:
+            file_id = message.video.file_id
+            sent_channel_msg = await context.bot.send_video(chat_id=CHANNEL_ID, video=file_id, caption=new_caption)
+            channel_msg_id = sent_channel_msg.message_id
+        elif message.document:
+            file_id = message.document.file_id
+            sent_channel_msg = await context.bot.send_document(chat_id=CHANNEL_ID, document=file_id, caption=new_caption)
+            channel_msg_id = sent_channel_msg.message_id
+        
+        save_file_record(file_type, file_name, message.caption, target_thread, saved_message_id, channel_msg_id)
     except Exception as e:
         logger.error(f"Failed to save to backup channel: {e}")
         save_file_record(file_type, file_name, message.caption, target_thread, saved_message_id)
