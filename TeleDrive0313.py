@@ -2,7 +2,7 @@
 TeleDrive Organizer Bot (Telegram Only)
 ----------------------------------------
 Developer: iamemon13
-Features: Multi-topic, MongoDB, Inline Search, Duplicate Check, Encryption & Weekly Auto-Forward Backup
+Features: Multi-topic, MongoDB, Inline Search, Duplicate Check, Encryption, Delete Command & Weekly Auto-Forward Backup
 """
 
 import asyncio
@@ -88,7 +88,7 @@ def save_file_record(file_type, file_name, caption, thread_id, message_id, chann
         "message_id": message_id,
         "channel_msg_id": channel_msg_id,
         "encrypted": encrypted,
-        "backed_up": False, # নতুন ফাইলের ক্ষেত্রে ব্যাকআপ ফলস থাকবে
+        "backed_up": False,
         "date": datetime.now().isoformat()
     }
     files_col.insert_one(record)
@@ -119,8 +119,7 @@ def cipher_text(text, key, decrypt=False):
 # ============ WEEKLY FORWARD BACKUP LOGIC ============
 
 async def perform_weekly_forward_backup(bot):
-    one_week_ago = (datetime.now() - timedelta(days57 if 'days57' in globals() else 7)).isoformat()
-    # শুধুমাত্র সেই ফাইলগুলো ফিল্টার করবে যেগুলোর ব্যাকআপ এখনো নেওয়া হয়নি
+    one_week_ago = (datetime.now() - timedelta(days=7)).isoformat()
     recent_files = list(files_col.find({
         "date": {"$gte": one_week_ago},
         "$or": [{"backed_up": {"$exists": False}}, {"backed_up": False}]
@@ -139,11 +138,11 @@ async def perform_weekly_forward_backup(bot):
                     from_chat_id=GROUP_ID,
                     message_id=msg_id
                 )
-                # সফলভাবে ফরোয়ার্ড হলে ডাটাবেসে backed_up true করে দিবে
                 files_col.update_one({"_id": item["_id"]}, {"$set": {"backed_up": True}})
                 count += 1
                 await asyncio.sleep(1)
             except Exception as e:
+                files_col.update_one({"_id": item["_id"]}, {"$set": {"backed_up": True}})
                 logger.error(f"Failed to forward message id {msg_id}: {e}")
     return count
 
@@ -160,6 +159,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• /search কিওয়ার্ড - ফাইল খুঁজুন\n"
             "• /stats - ড্রাইভের মোট ফাইলের হিসেব দেখুন\n"
             "• /backup_now - বিগত ৭ দিনের নতুন ফাইলগুলো ব্যাকআপ চ্যানেলে ফরোয়ার্ড করুন\n"
+            "• /delete - গ্রুপে ফাইলের মেসেজে রিপ্লাই দিয়ে এই কমান্ড দিলে ডাটাবেস থেকে রিমুভ হবে\n"
             "• /encrypt পাসওয়ার্ড টেক্সট - টেক্সট লক করুন\n"
             "• /decrypt পাসওয়ার্ড টেক্সট - টেক্সট আনলক করুন\n"
             "• Inline Search: অন্য কোনো চ্যাটে `@TeleDrive0313_bot keyword` টাইপ করে ফাইল শেয়ার করুন।"
@@ -186,6 +186,19 @@ async def backup_now_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text("🔄 ব্যাকআপ প্রক্রিয়া শুরু হচ্ছে...")
     count = await perform_weekly_forward_backup(context.bot)
     await update.message.reply_text(f"✅ ব্যাকআপ সফল! মোট {count} টি নতুন ফাইল ফরোয়ার্ড করা হয়েছে।")
+
+async def delete_record_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.reply_to_message:
+        await update.message.reply_text("⚠️ যে ফাইলটি ডাটাবেস থেকে মুছতে চান, সেই মেসেজটিতে রিপ্লাই দিয়ে `/delete` লিখুন।")
+        return
+    
+    replied_msg_id = update.message.reply_to_message.message_id
+    result = files_col.delete_one({"message_id": replied_msg_id})
+    
+    if result.deleted_count > 0:
+        await update.message.reply_text("✅ ফাইলটি ডাটাবেস থেকে সফলভাবে মুছে ফেলা হয়েছে!")
+    else:
+        await update.message.reply_text("⚠️ এই ফাইলটির কোনো রেকর্ড ডাটাবেসে পাওয়া যায়নি।")
 
 async def encrypt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or len(context.args) < 2:
@@ -246,7 +259,6 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         c_copied = await context.bot.copy_message(chat_id=CHANNEL_ID, from_chat_id=GROUP_ID, message_id=message.message_id)
-        # ব্যাকআপ চ্যানেলে পাঠানোর সময় backed_up: false দিয়ে সেভ করবে
         save_file_record(file_type, f"{file_type}_{message.message_id}", message.caption, target_thread, copied.message_id, c_copied.message_id)
     except:
         save_file_record(file_type, f"{file_type}_{message.message_id}", message.caption, target_thread, copied.message_id)
@@ -261,6 +273,7 @@ async def main_async():
     app.add_handler(CommandHandler("search", search_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("backup_now", backup_now_command))
+    app.add_handler(CommandHandler("delete", delete_record_command))
     app.add_handler(CommandHandler("encrypt", encrypt_command))
     app.add_handler(CommandHandler("decrypt", decrypt_command))
     app.add_handler(InlineQueryHandler(inline_search))
@@ -269,7 +282,7 @@ async def main_async():
     if app.job_queue:
         app.job_queue.run_repeating(weekly_backup_job, interval=604800, first=15)
 
-    print("TeleDrive Bot with smart backup filter is running...")
+    print("TeleDrive Bot with delete & backup fix is running...")
     async with app:
         await app.initialize()
         await app.start()
@@ -278,4 +291,3 @@ async def main_async():
 
 if __name__ == "__main__":
     asyncio.run(main_async())
-        
