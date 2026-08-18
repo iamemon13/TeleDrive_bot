@@ -2,7 +2,7 @@
 TeleDrive Organizer Bot (Telegram Only)
 ----------------------------------------
 Developer: iamemon13
-Features: Multi-topic, MongoDB, Inline Search, Duplicate Check, Encryption, Delete Command & Weekly Auto-Forward Backup
+Features: Multi-topic, MongoDB, Inline Search, Duplicate Check, Encryption, Delete Command & Sequential Backup
 """
 
 import asyncio
@@ -72,6 +72,11 @@ db = client["teledrive_db"]
 files_col = db["files"]
 
 def save_file_record(file_type, file_name, caption, thread_id, message_id, channel_msg_id=None, encrypted=False):
+    # ডুপ্লিকেট চেক: যদি একই message_id ইতিমধ্যে ডাটাবেসে থাকে
+    existing = files_col.find_one({"message_id": message_id})
+    if existing:
+        return existing
+
     record = {
         "file_type": file_type,
         "file_name": file_name or "",
@@ -83,7 +88,7 @@ def save_file_record(file_type, file_name, caption, thread_id, message_id, chann
         "backed_up": False,
         "date": datetime.now().isoformat()
     }
-    files_col.insert_one(record)
+    return files_col.insert_one(record)
 
 def search_files(keyword):
     query = {
@@ -108,38 +113,38 @@ def cipher_text(text, key, decrypt=False):
             result.append(char)
     return "".join(result)
 
-# ============ WEEKLY FORWARD BACKUP LOGIC ============
+# ============ SEQUENTIAL BACKUP LOGIC (ধারাবাহিক ও ডুপ্লিকেট মুক্ত ব্যাকআপ) ============
 
-async def perform_weekly_forward_backup(bot):
-    one_week_ago = (datetime.now() - timedelta(days=7)).isoformat()
-    recent_files = list(files_col.find({
-        "date": {"$gte": one_week_ago},
-        "$or": [{"backed_up": {"$exists": False}}, {"backed_up": False}]
-    }))
+async def perform_sequential_backup(bot):
+    # যে ফাইলগুলোর ব্যাকআপ এখনো হয়নি (`backed_up: False` বা ফিল্ড নেই), সেগুলোকে পুরোনো থেকে নতুন ক্রমানুসারে ফেচ করবে
+    pending_files = list(files_col.find(
+        {"$or": [{"backed_up": {"$exists": False}}, {"backed_up": False}]}
+    ).sort("_id", 1))
     
-    if not recent_files:
+    if not pending_files:
         return 0
 
     count = 0
-    for item in recent_files:
+    for item in pending_files:
         msg_id = item.get("message_id")
         if msg_id:
             try:
-                await bot.forward_message(
-                    chat_id=BACKUP_CHANNEL_ID,
-                    from_chat_id=GROUP_ID,
-                    message_id=msg_id
-                )
-                files_col.update_one({"_id": item["_id"]}, {"$set": {"backed_up": True}})
-                count += 1
-                await asyncio.sleep(1)
+                if not item.get("backed_up"):
+                    await bot.forward_message(
+                        chat_id=BACKUP_CHANNEL_ID,
+                        from_chat_id=GROUP_ID,
+                        message_id=msg_id
+                    )
+                    files_col.update_one({"_id": item["_id"]}, {"$set": {"backed_up": True}})
+                    count += 1
+                    await asyncio.sleep(1)
             except Exception as e:
                 files_col.update_one({"_id": item["_id"]}, {"$set": {"backed_up": True}})
                 logger.error(f"Failed to forward message id {msg_id}: {e}")
     return count
 
 async def weekly_backup_job(context: ContextTypes.DEFAULT_TYPE):
-    await perform_weekly_forward_backup(context.bot)
+    await perform_sequential_backup(context.bot)
 
 # ============ TELEGRAM HANDLERS ============
 
@@ -150,7 +155,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📌 কমান্ডসমূহ:\n"
             "• /search কিওয়ার্ড - ফাইল খুঁজুন\n"
             "• /stats - ড্রাইভের মোট ফাইলের হিসেব দেখুন\n"
-            "• /backup_now - বিগত ৭ দিনের নতুন ফাইলগুলো ব্যাকআপ চ্যানেলে ফরোয়ার্ড করুন\n"
+            "• /backup_now - বাদ পড়া বা পরবর্তী নতুন ফাইলগুলো ব্যাকআপ চ্যানেলে ফরোয়ার্ড করুন\n"
             "• /delete - গ্রুপে ফাইলের মেসেজে রিপ্লাই দিয়ে এই কমান্ড দিলে ডাটাবেস থেকে রিমুভ হবে\n"
             "• /encrypt পাসওয়ার্ড টেক্সট - টেক্সট লক করুন\n"
             "• /decrypt পাসওয়ার্ড টেক্সট - টেক্সট আনলক করুন\n"
@@ -175,9 +180,12 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def backup_now_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message: return
-    await update.message.reply_text("🔄 ব্যাকআপ প্রক্রিয়া শুরু হচ্ছে...")
-    count = await perform_weekly_forward_backup(context.bot)
-    await update.message.reply_text(f"✅ ব্যাকআপ সফল! মোট {count} টি নতুন ফাইল ফরোয়ার্ড করা হয়েছে।")
+    await update.message.reply_text("🔄 ধারাবাহিক ব্যাকআপ প্রক্রিয়া শুরু হচ্ছে...")
+    count = await perform_sequential_backup(context.bot)
+    if count > 0:
+        await update.message.reply_text(f"✅ ব্যাকআপ সফল! মোট {count} টি নতুন ফাইল পর্যায়ক্রমে ফরোয়ার্ড করা হয়েছে।")
+    else:
+        await update.message.reply_text("ℹ️ ব্যাকআপ করার মতো নতুন কোনো ফাইল বাকি নেই, সব আপলোড করা আছে!")
 
 async def delete_record_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.reply_to_message:
@@ -332,3 +340,4 @@ async def main_async():
 
 if __name__ == "__main__":
     asyncio.run(main_async())
+    
