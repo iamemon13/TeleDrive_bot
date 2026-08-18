@@ -3,7 +3,7 @@ TeleDrive & WhatsApp Bridge Organizer Bot
 ------------------------------------------
 Developer: iamemon13
 Bot Name: TeleDrive0313
-Features: Multi-topic, MongoDB, Inline Search, Duplicate Check, Direct Link, Encryption, Weekly Auto-Forward Backup & WhatsApp Webhook Integration
+Features: Multi-topic, MongoDB, Inline Search, Duplicate Check, Direct Link, Encryption, Weekly Auto-Forward Backup & WhatsApp Bridge
 """
 
 import asyncio
@@ -39,10 +39,10 @@ GROUP_ID = -1004449101180
 CHANNEL_ID = -1004304201011
 BACKUP_CHANNEL_ID = -1004304201011  
 
-# WhatsApp API Config (আপনার মেটা ডেভেলপার অ্যাকাউন্ট থেকে প্রাপ্ত তথ্য এখানে দিন)
-WHATSAPP_TOKEN = "আপনার_হোয়াটসঅ্যাপ_টোকেন_এখানে_দিন"
-PHONE_NUMBER_ID = "আপনার_ফোন_নম্বর_আইডি_এখানে_দিন"
-VERIFY_TOKEN = "mamon123"  # মেটা ওয়েব হুক ভেরিফিকেশনের জন্য ইচ্ছামতো টোকেন
+# WhatsApp Config (আপনার দেওয়া পুরনো টোকেন ও আইডি থেকে প্রাপ্ত)
+WHATSAPP_TOKEN = 'EAAWeZAG4KXLEBSXmlJ0b0iyKtZAuljh0kXjKyoJuQlF5icofobM6ZAwGlZAhclcOKsoVPtZA7ZBYvJZB2WraVVnFI67oxWWTIpK39YRMlmn6Ej63gvaxBKR9NuogTZBs0edbyzq8Mu2TpNKr10CGnM1TCvFTVnGrPLZCHB0oa48j1VPqKK2WkwZA0H8UeoDZCguXwZDZD'
+PHONE_NUMBER_ID = '1355197357667326'
+VERIFY_TOKEN = 'yoyoji..'
 
 TOPIC_IDS = {
     "photo": 6,      # 📷 Photos topic id
@@ -60,57 +60,52 @@ app_flask = Flask('')
 def home():
     return "TeleDrive & WhatsApp Bridge Bot is running alive!"
 
-# হোয়াটসঅ্যাপ মেসেজ রিসিভ করার ওয়েব হুক রুট
 @app_flask.route('/webhook', methods=['GET', 'POST'])
 def whatsapp_webhook():
     if request.method == 'GET':
-        # মেটা ওয়েব হুক ভেরিফিকেশন
-        mode = request.args.get('hub.mode')
         token = request.args.get('hub.verify_token')
         challenge = request.args.get('hub.challenge')
-        
-        if mode == 'subscribe' and token == VERIFY_TOKEN:
+        if token == VERIFY_TOKEN:
             return challenge, 200
-        return 'Verification failed', 403
+        return 'Invalid token', 403
 
     elif request.method == 'POST':
-        data = request.json
-        logger.info(f"Received WhatsApp Data: {json.dumps(data)}")
+        data = request.get_json()
+        logger.info(f"Incoming WhatsApp Data: {json.dumps(data)}")
         
         try:
-            # মেসেজ এক্সট্রাক্ট করা
-            entry = data.get('entry', [{}])[0]
-            change = entry.get('changes', [{}])[0]
-            value = change.get('value', {})
-            messages = value.get('messages', [])
-
-            if messages:
-                msg = messages[0]
-                sender_phone = msg.get('from')
-                msg_type = msg.get('type')
-                
-                # যদি টেক্সট মেসেজ হয়
-                if msg_type == 'text':
-                    incoming_text = msg.get('text', {}).get('body', '')
-                    reply_text = f"WhatsApp থেকে রিসিভ হয়েছে: {incoming_text}"
-                    send_whatsapp_message(sender_phone, reply_text)
+            entries = data.get('entry', [])
+            for entry in entries:
+                changes = entry.get('changes', [])
+                for change in changes:
+                    value = change.get('value', {})
+                    messages = value.get('messages', [])
                     
-                    # অপশনাল: হোয়াটসঅ্যাপের টেক্সটটি টেলিগ্রাম গ্রুপেও পাঠিয়ে দিতে পারেন
-                    # send_to_telegram_group(f"📱 WhatsApp থেকে প্রাপ্ত:\n{incoming_text}")
-
-                # যদি মিডিয়া বা ডকুমেন্ট হয় (ভবিষ্যৎ এক্সটেনশনের জন্য)
-                elif msg_type in ['document', 'image', 'video']:
-                    send_whatsapp_message(sender_phone, "ফাইলটি পাওয়া গেছে! টেলিগ্রামে ফরোয়ার্ড করা হচ্ছে...")
-                    # এখানে মিডিয়া ডাউনলোড করে টেলিগ্রামে পাঠানোর লজিক যুক্ত করা যাবে
+                    for message in messages:
+                        sender_phone = message.get('from')
+                        msg_type = message.get('type')
+                        
+                        # ১. যদি টেক্সট মেসেজ হয়
+                        if msg_type == 'text':
+                            message_body = message.get('text', {}).get('body')
+                            if sender_phone and message_body:
+                                # হোয়াটসঅ্যাপে অটো-রিপ্লাই পাঠানো
+                                send_whatsapp_message(sender_phone, f"Hello! Received your text: {message_body}")
+                                # টেলিগ্রাম গ্রুপেও ফরোয়ার্ড করা
+                                send_to_telegram_group(f"📱 WhatsApp থেকে প্রাপ্ত টেক্সট:\n{message_body}")
+                        
+                        # ২. যদি ডকুমেন্ট বা মিডিয়া ফাইল হয়
+                        elif msg_type in ['document', 'image', 'video']:
+                            send_whatsapp_message(sender_phone, "ফাইলটি পাওয়া গেছে! টেলিগ্রাম ড্রাইভে ফরোয়ার্ড করা হচ্ছে...")
+                            send_to_telegram_group(f"📱 WhatsApp থেকে একটি নতুন {msg_type} ফাইল আপলোড করা হয়েছে। (নম্বর: {sender_phone})")
 
         except Exception as e:
-            logger.error(f"Error processing WhatsApp webhook: {e}")
+            logger.error(f"Error processing WhatsApp message: {e}")
 
         return jsonify({"status": "success"}), 200
 
-def send_whatsapp_message(recipient_phone, message_body):
-    """হোয়াটসঅ্যাপে ব্যাক-রিপ্লাই পাঠানোর ফাংশন"""
-    url = f"https://graph.facebook.com/v21.0/{PHONE_NUMBER_ID}/messages"
+def send_whatsapp_message(recipient_phone, text_message):
+    url = f"https://graph.facebook.com/v22.0/{PHONE_NUMBER_ID}/messages"
     headers = {
         "Authorization": f"Bearer {WHATSAPP_TOKEN}",
         "Content-Type": "application/json"
@@ -119,16 +114,15 @@ def send_whatsapp_message(recipient_phone, message_body):
         "messaging_product": "whatsapp",
         "to": recipient_phone,
         "type": "text",
-        "text": {"body": message_body}
+        "text": {"body": text_message}
     }
     try:
-        response = requests.post(url, headers=headers, json=payload)
-        logger.info(f"WhatsApp Response: {response.status_code}")
+        requests.post(url, json=payload, headers=headers)
     except Exception as e:
         logger.error(f"Failed to send WhatsApp message: {e}")
 
 def send_to_telegram_group(text):
-    """টেলিগ্রাম গ্রুপে সরাসরি মেসেজ পাঠানোর ফাংশন"""
+    """হোয়াটসঅ্যাপের ডেটা সরাসরি টেলিগ্রাম গ্রুপে পাঠানোর ফাংশন"""
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": GROUP_ID,
@@ -242,7 +236,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
         await update.message.reply_text(
             "TeleDrive & WhatsApp Bridge Bot (Developed by @iamemon13) চালু আছে ✅\n\n"
-            "📌 কমান্ডসমূহ:\n"
+            "📌 টেলিগ্রাম কমান্ডসমূহ:\n"
             "• /search কিওয়ার্ড - ফাইল খুঁজুন\n"
             "• /stats - ড্রাইভের মোট ফাইলের হিসেব দেখুন\n"
             "• /backup_now - বিগত ৭ দিনের নতুন ফাইলগুলো ব্যাকআপ চ্যানেলে ফরোয়ার্ড করুন\n"
@@ -467,9 +461,9 @@ async def main_async():
         await app.initialize()
         await app.start()
         await app.updater.start_polling(drop_pending_updates=True)
-        asyncio.Event().wait()
+        await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    keep_alive()  # ফ্লাস্ক সার্ভার ও ওয়েব হুক চালু রাখবে
+    keep_alive()  # ফ্লাস্ক সার্ভার, ওয়েব হুক এবং টেলিগ্রাম বট একসঙ্গে চালু রাখবে
     asyncio.run(main_async())
-    
+        
