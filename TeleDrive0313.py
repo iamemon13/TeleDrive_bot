@@ -2,7 +2,7 @@
 TeleDrive Organizer Bot (Telegram Only)
 ----------------------------------------
 Developer: iamemon13
-Features: Multi-topic, MongoDB, Inline Search, Duplicate Check, Encryption & Weekly Auto-Forward Backup
+Features: Multi-topic, MongoDB, Inline Search, Duplicate Check, Encryption, Weekly Backup & Delete Record
 """
 
 import asyncio
@@ -137,7 +137,9 @@ async def perform_weekly_forward_backup(bot):
                 count += 1
                 await asyncio.sleep(1)
             except Exception as e:
-                logger.error(f"Failed to forward message id {msg_id}: {e}")
+                # যদি পুরনো মেসেজ বা চ্যাট থেকে মেসেজ ডিলিট হয়ে গিয়ে থাকে, তবে ডাটাবেস থেকে ওই ইনভ্যালিড রেকর্ড রিমুভ করে দিবে
+                files_col.delete_one({"_id": item.get("_id")})
+                logger.error(f"Removed invalid message id {msg_id} from DB: {e}")
     return count
 
 async def weekly_backup_job(context: ContextTypes.DEFAULT_TYPE):
@@ -153,6 +155,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• /search কিওয়ার্ড - ফাইল খুঁজুন\n"
             "• /stats - ড্রাইভের মোট ফাইলের হিসেব দেখুন\n"
             "• /backup_now - বিগত ৭ দিনের নতুন ফাইলগুলো ব্যাকআপ চ্যানেলে ফরোয়ার্ড করুন\n"
+            "• /delete - গ্রুপে ফাইল মেসেজে রিপ্লাই দিয়ে এই কমান্ড দিলে ডাটাবেস থেকে রিমুভ হবে\n"
             "• /encrypt পাসওয়ার্ড টেক্সট - টেক্সট লক করুন\n"
             "• /decrypt পাসওয়ার্ড টেক্সট - টেক্সট আনলক করুন\n"
             "• Inline Search: অন্য কোনো চ্যাটে `@TeleDrive0313_bot keyword` টাইপ করে ফাইল শেয়ার করুন।"
@@ -179,6 +182,19 @@ async def backup_now_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text("🔄 ব্যাকআপ প্রক্রিয়া শুরু হচ্ছে...")
     count = await perform_weekly_forward_backup(context.bot)
     await update.message.reply_text(f"✅ ব্যাকআপ সফল! মোট {count} টি ফাইল ফরোয়ার্ড করা হয়েছে।")
+
+async def delete_record_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.reply_to_message:
+        await update.message.reply_text("⚠️ যে ফাইলটি ডাটাবেস থেকে মুছতে চান, সেই মেসেজটিতে রিপ্লাই দিয়ে `/delete` লিখুন।")
+        return
+    
+    replied_msg_id = update.message.reply_to_message.message_id
+    result = files_col.delete_one({"message_id": replied_msg_id})
+    
+    if result.deleted_count > 0:
+        await update.message.reply_text("✅ ফাইলটি ডাটাবেস থেকে সফলভাবে মুছে ফেলা হয়েছে!")
+    else:
+        await update.message.reply_text("⚠️ এই ফাইলটির কোনো রেকর্ড ডাটাবেসে পাওয়া যায়নি।")
 
 async def encrypt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or len(context.args) < 2:
@@ -253,6 +269,7 @@ async def main_async():
     app.add_handler(CommandHandler("search", search_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("backup_now", backup_now_command))
+    app.add_handler(CommandHandler("delete", delete_record_command))
     app.add_handler(CommandHandler("encrypt", encrypt_command))
     app.add_handler(CommandHandler("decrypt", decrypt_command))
     app.add_handler(InlineQueryHandler(inline_search))
@@ -261,7 +278,7 @@ async def main_async():
     if app.job_queue:
         app.job_queue.run_repeating(weekly_backup_job, interval=604800, first=15)
 
-    print("TeleDrive Bot with full commands is running...")
+    print("TeleDrive Bot is running fully with delete support...")
     async with app:
         await app.initialize()
         await app.start()
@@ -270,4 +287,4 @@ async def main_async():
 
 if __name__ == "__main__":
     asyncio.run(main_async())
-        
+    
