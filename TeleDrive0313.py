@@ -239,20 +239,35 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if message is None or message.chat_id != GROUP_ID: 
         return
 
-    # বট নিজের তৈরি করা মেসেজ রিপ্রসেস করবে না (লুপ এড়াতে)
     if message.from_user and message.from_user.is_bot:
         return
 
-    # যদি ফাইলটি ইতিমধ্যে বটের মাধ্যমে টপিকে পাঠানো হয়ে থাকে (ক্যাপশনে #TeleDrive ট্যাগ থাকে), তবে রিপ্রসেস করবে না
     if message.caption and "#TeleDrive" in message.caption:
         return
 
-    file_type = "photo" if message.photo else "video" if message.video else "document"
+    file_type = "document"
+    file_name = ""
+
+    if message.photo:
+        file_type = "photo"
+        file_name = f"photo_{message.message_id}.jpg"
+    elif message.video:
+        file_type = "video"
+        file_name = f"video_{message.message_id}.mp4"
+    elif message.document:
+        file_name = message.document.file_name or "document"
+        ext = file_name.split('.')[-1].lower() if '.' in file_name else ''
+        
+        if ext in ['jpg', 'jpeg', 'png', 'webp']:
+            file_type = "photo"
+        elif ext in ['mp4', 'mkv', 'mov', 'avi', 'webm']:
+            file_type = "video"
+        else:
+            file_type = "document"
+
     current_thread = message.message_thread_id
     target_thread = TOPIC_IDS.get(file_type, 12)
     
-    # ইউজার যদি জেনারেল বা অন্য কোনো টপিক থেকে দেয়, তবে সেটিকে নির্দিষ্ট টপিকে কপি করবে
-    # আর যদি সরাসরি ওই টপিকের ভেতরেই দেয়, তবে কপি করার দরকার নেই, সরাসরি ডাটাবেস ও ব্যাকআপে সেভ হবে
     saved_message_id = message.message_id
     
     if current_thread != target_thread:
@@ -268,13 +283,12 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"Failed to copy message to target thread: {e}")
 
-    # ব্যাকআপ চ্যানেল এবং ডাটাবেসে সেভ করার অংশ
     try:
         c_copied = await context.bot.copy_message(chat_id=CHANNEL_ID, from_chat_id=GROUP_ID, message_id=message.message_id)
-        save_file_record(file_type, f"{file_type}_{message.message_id}", message.caption, target_thread, saved_message_id, c_copied.message_id)
+        save_file_record(file_type, file_name, message.caption, target_thread, saved_message_id, c_copied.message_id)
     except Exception as e:
         logger.error(f"Failed to save to backup channel: {e}")
-        save_file_record(file_type, f"{file_type}_{message.message_id}", message.caption, target_thread, saved_message_id)
+        save_file_record(file_type, file_name, message.caption, target_thread, saved_message_id)
 
 # ============ MAIN ============
 
@@ -304,4 +318,3 @@ async def main_async():
 
 if __name__ == "__main__":
     asyncio.run(main_async())
-    
