@@ -40,9 +40,6 @@ TOPIC_IDS = {
     "document": 12,  # 📄 Documents topic id
 }
 
-# ইগনোর লিস্ট খালি রাখা হয়েছে, যাতে যেকোনো টপিক বা জেনারেল থেকে ফাইল দিলে কাজ করে
-IGNORE_THREAD_IDS = set()
-
 # ============ RENDER KEEP ALIVE SERVER ============
 
 app_flask = Flask('')
@@ -73,12 +70,6 @@ logger = logging.getLogger(__name__)
 client = MongoClient(MONGO_URI)
 db = client["teledrive_db"]
 files_col = db["files"]
-
-def is_duplicate(file_name, caption):
-    query = {"file_name": file_name}
-    if caption:
-        query["caption"] = caption
-    return files_col.find_one(query) is not None
 
 def save_file_record(file_type, file_name, caption, thread_id, message_id, channel_msg_id=None, encrypted=False):
     record = {
@@ -252,26 +243,38 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if message.from_user and message.from_user.is_bot:
         return
 
-    file_type = "photo" if message.photo else "video" if message.video else "document"
-    target_thread = TOPIC_IDS.get(file_type, 12)
-    
-    # যদি মেসেজটি ইতিমধ্যে সঠিক টার্গেট থ্রেডে বা টপিকে থাকে, তবে সেটি পুনরায় কপি করার দরকার নেই
-    if message.message_thread_id == target_thread:
+    # যদি ফাইলটি ইতিমধ্যে বটের মাধ্যমে টপিকে পাঠানো হয়ে থাকে (ক্যাপশনে #TeleDrive ট্যাগ থাকে), তবে রিপ্রসেস করবে না
+    if message.caption and "#TeleDrive" in message.caption:
         return
 
-    copied = await context.bot.copy_message(
-        chat_id=GROUP_ID,
-        from_chat_id=GROUP_ID,
-        message_id=message.message_id,
-        message_thread_id=target_thread,
-        caption=(message.caption or "") + f"\n\n#{file_type} #TeleDrive"
-    )
+    file_type = "photo" if message.photo else "video" if message.video else "document"
+    current_thread = message.message_thread_id
+    target_thread = TOPIC_IDS.get(file_type, 12)
     
+    # ইউজার যদি জেনারেল বা অন্য কোনো টপিক থেকে দেয়, তবে সেটিকে নির্দিষ্ট টপিকে কপি করবে
+    # আর যদি সরাসরি ওই টপিকের ভেতরেই দেয়, তবে কপি করার দরকার নেই, সরাসরি ডাটাবেস ও ব্যাকআপে সেভ হবে
+    saved_message_id = message.message_id
+    
+    if current_thread != target_thread:
+        try:
+            copied = await context.bot.copy_message(
+                chat_id=GROUP_ID,
+                from_chat_id=GROUP_ID,
+                message_id=message.message_id,
+                message_thread_id=target_thread,
+                caption=(message.caption or "") + f"\n\n#{file_type} #TeleDrive"
+            )
+            saved_message_id = copied.message_id
+        except Exception as e:
+            logger.error(f"Failed to copy message to target thread: {e}")
+
+    # ব্যাকআপ চ্যানেল এবং ডাটাবেসে সেভ করার অংশ
     try:
         c_copied = await context.bot.copy_message(chat_id=CHANNEL_ID, from_chat_id=GROUP_ID, message_id=message.message_id)
-        save_file_record(file_type, f"{file_type}_{message.message_id}", message.caption, target_thread, copied.message_id, c_copied.message_id)
-    except:
-        save_file_record(file_type, f"{file_type}_{message.message_id}", message.caption, target_thread, copied.message_id)
+        save_file_record(file_type, f"{file_type}_{message.message_id}", message.caption, target_thread, saved_message_id, c_copied.message_id)
+    except Exception as e:
+        logger.error(f"Failed to save to backup channel: {e}")
+        save_file_record(file_type, f"{file_type}_{message.message_id}", message.caption, target_thread, saved_message_id)
 
 # ============ MAIN ============
 
@@ -292,7 +295,7 @@ async def main_async():
     if app.job_queue:
         app.job_queue.run_repeating(weekly_backup_job, interval=604800, first=15)
 
-    print("TeleDrive Bot with multi-topic file routing is running...")
+    print("TeleDrive Bot with universal file routing is running...")
     async with app:
         await app.initialize()
         await app.start()
