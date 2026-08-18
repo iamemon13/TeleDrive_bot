@@ -1,9 +1,8 @@
 """
-TeleDrive & WhatsApp Bridge Organizer Bot
-------------------------------------------
+TeleDrive Organizer Bot (Telegram Only)
+----------------------------------------
 Developer: iamemon13
-Bot Name: TeleDrive0313
-Features: Multi-topic, MongoDB, Inline Search, Duplicate Check, Direct Link, Encryption, Weekly Auto-Forward Backup & WhatsApp Bridge
+Features: Multi-topic, MongoDB, Inline Search, Duplicate Check, Direct Link, Encryption, Weekly Auto-Forward Backup
 """
 
 import asyncio
@@ -11,11 +10,8 @@ import io
 import json
 import logging
 import os
-import requests
 from datetime import datetime, timedelta
-from threading import Thread
 from urllib.parse import quote_plus
-from flask import Flask, request, jsonify
 from pymongo import MongoClient
 
 from telegram import Update, InlineQueryResultArticle, InputTextMessageContent
@@ -28,7 +24,7 @@ from telegram.ext import (
     filters,
 )
 
-# ============ CONFIG (Environment Variables থেকে লোড হবে) ============
+# ============ CONFIG ============
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
@@ -37,13 +33,7 @@ DB_PASSWORD = quote_plus(db_password_raw)
 MONGO_URI = os.environ.get("MONGO_URI") or f"mongodb+srv://TeleDrive0313_bot:{DB_PASSWORD}@cluster0.xvifgpb.mongodb.net/?appName=Cluster0"
 
 GROUP_ID = -1004449101180
-CHANNEL_ID = -1004304201011
 BACKUP_CHANNEL_ID = -1004304201011  
-
-# WhatsApp Config (Environment Variables থেকে লোড হবে)
-WHATSAPP_TOKEN = os.environ.get("WHATSAPP_TOKEN")
-PHONE_NUMBER_ID = os.environ.get("PHONE_NUMBER_ID")
-VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN", "yoyoji..")
 
 TOPIC_IDS = {
     "photo": 6,      # 📷 Photos topic id
@@ -52,154 +42,6 @@ TOPIC_IDS = {
 }
 
 IGNORE_THREAD_IDS = set(TOPIC_IDS.values())
-
-# ============ FLASK & WHATSAPP WEBHOOK SERVER ============
-
-app_flask = Flask('')
-
-@app_flask.route('/')
-def home():
-    return "TeleDrive & WhatsApp Bridge Bot is running alive!"
-
-@app_flask.route('/webhook', methods=['GET', 'POST'])
-def whatsapp_webhook():
-    if request.method == 'GET':
-        token = request.args.get('hub.verify_token')
-        challenge = request.args.get('hub.challenge')
-        if token == VERIFY_TOKEN:
-            return challenge, 200
-        return 'Invalid token', 403
-
-    elif request.method == 'POST':
-        data = request.get_json()
-        logger.info(f"Incoming WhatsApp Data: {json.dumps(data)}")
-        
-        try:
-            entries = data.get('entry', [])
-            for entry in entries:
-                changes = entry.get('changes', [])
-                for change in changes:
-                    value = change.get('value', {})
-                    messages = value.get('messages', [])
-                    
-                    for message in messages:
-                        sender_phone = message.get('from')
-                        msg_type = message.get('type')
-                        
-                        # ১. যদি টেক্সট মেসেজ হয়
-                        if msg_type == 'text':
-                            message_body = message.get('text', {}).get('body')
-                            if sender_phone and message_body:
-                                send_whatsapp_message(sender_phone, f"Hello! Received your text: {message_body}")
-                                send_to_telegram_group(f"📱 WhatsApp থেকে প্রাপ্ত টেক্সট:\n{message_body}")
-                        
-                        # ২. যদি ছবি (image) বা ডকুমেন্ট/ভিডিও হয়
-                        elif msg_type in ['image', 'document', 'video']:
-                            media_data = message.get(msg_type, {})
-                            media_id = media_data.get('id')
-                            caption = media_data.get('caption', '')
-                            if media_id:
-                                file_url, mime_type = get_whatsapp_media_details(media_id)
-                                if file_url:
-                                    send_whatsapp_message(sender_phone, "ফাইলটি পাওয়া গেছে! টেলিগ্রাম ড্রাইভে পাঠানো হচ্ছে...")
-                                    
-                                    # ফাইল বাইট সরাসরি ডাউনলোড করে টেলিগ্রাম গ্রুপে পাঠানো
-                                    file_bytes = download_bytes_from_url(file_url)
-                                    if file_bytes:
-                                        if msg_type == 'image':
-                                            send_photo_bytes_to_telegram(file_bytes, f"📱 WhatsApp Photo ({sender_phone})\n{caption}")
-                                        else:
-                                            send_document_bytes_to_telegram(file_bytes, f"📱 WhatsApp {msg_type} ({sender_phone})\n{caption}", f"media_{media_id}.jpg" if msg_type=='image' else f"file_{media_id}")
-                                    else:
-                                        # ব্যাকআপ হিসেবে লিংক পাঠিয়ে দেওয়া যদি বাইট ডাউনলোড ফেইল করে
-                                        send_to_telegram_group(f"📱 WhatsApp থেকে একটি {msg_type} এসেছে (নম্বর: {sender_phone})\nডাউনলোড লিংক: {file_url}\n{caption}")
-
-        except Exception as e:
-            logger.error(f"Error processing WhatsApp message: {e}")
-
-        return jsonify({"status": "success"}), 200
-
-def get_whatsapp_media_details(media_id):
-    """মেটার সার্ভার থেকে মিডিয়ার ডাউনলোডেবল লিংক এবং মাইম টাইপ বের করার ফাংশন"""
-    url = f"https://graph.facebook.com/v22.0/{media_id}"
-    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
-    try:
-        response = requests.get(url, headers=headers)
-        res_json = response.json()
-        return res_json.get("url"), res_json.get("mime_type")
-    except Exception as e:
-        logger.error(f"Failed to get media details: {e}")
-        return None, None
-
-def download_bytes_from_url(file_url):
-    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
-    try:
-        res = requests.get(file_url, headers=headers)
-        if res.status_code == 200:
-            return res.content
-    except Exception as e:
-        logger.error(f"Failed to download bytes from URL: {e}")
-    return None
-
-def send_whatsapp_message(recipient_phone, text_message):
-    url = f"https://graph.facebook.com/v22.0/{PHONE_NUMBER_ID}/messages"
-    headers = {
-        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": recipient_phone,
-        "type": "text",
-        "text": {"body": text_message}
-    }
-    try:
-        requests.post(url, json=payload, headers=headers)
-    except Exception as e:
-        logger.error(f"Failed to send WhatsApp message: {e}")
-
-def send_to_telegram_group(text):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": GROUP_ID,
-        "text": text
-    }
-    try:
-        requests.post(url, json=payload)
-    except Exception as e:
-        logger.error(f"Failed to send to Telegram group: {e}")
-
-def send_photo_bytes_to_telegram(photo_bytes, caption):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
-    photo_topic_id = TOPIC_IDS.get("photo", 6)
-    files = {"photo": ("whatsapp_photo.jpg", io.BytesIO(photo_bytes))}
-    data = {
-        "chat_id": GROUP_ID,
-        "message_thread_id": photo_topic_id,
-        "caption": caption
-    }
-    try:
-        requests.post(url, data=data, files=files)
-    except Exception as e:
-        logger.error(f"Failed to send photo bytes: {e}")
-
-def send_document_bytes_to_telegram(doc_bytes, caption, filename):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
-    doc_topic_id = TOPIC_IDS.get("document", 12)
-    files = {"document": (filename, io.BytesIO(doc_bytes))}
-    data = {
-        "chat_id": GROUP_ID,
-        "message_thread_id": doc_topic_id,
-        "caption": caption
-    }
-    try:
-        requests.post(url, data=data, files=files)
-    except Exception as e:
-        logger.error(f"Failed to send document bytes: {e}")
-
-def run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    app_flask.run(host='0.0.0.0', port=port, use_reloader=False)
 
 # ============ LOGGING ============
 
@@ -214,12 +56,6 @@ logger = logging.getLogger(__name__)
 client = MongoClient(MONGO_URI)
 db = client["teledrive_db"]
 files_col = db["files"]
-
-def is_duplicate(file_name, caption):
-    query = {"file_name": file_name}
-    if caption:
-        query["caption"] = caption
-    return files_col.find_one(query) is not None
 
 def save_file_record(file_type, file_name, caption, thread_id, message_id, channel_msg_id=None, encrypted=False):
     record = {
@@ -289,7 +125,7 @@ async def weekly_backup_job(context: ContextTypes.DEFAULT_TYPE):
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
-        await update.message.reply_text("TeleDrive & WhatsApp Bridge Bot (Developed by @iamemon13) চালু আছে ✅")
+        await update.message.reply_text("TeleDrive Bot (Developed by @iamemon13) সফলভাবে চালু আছে ✅")
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -373,10 +209,6 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ============ MAIN ============
 
 async def main_async():
-    flask_thread = Thread(target=run_flask)
-    flask_thread.daemon = True
-    flask_thread.start()
-
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start_command))
@@ -391,11 +223,11 @@ async def main_async():
     if app.job_queue:
         app.job_queue.run_repeating(weekly_backup_job, interval=604800, first=15)
 
-    async with app:
-        await app.initialize()
-        await app.start()
-        await app.updater.start_polling(drop_pending_updates=True)
-        await asyncio.Event().wait()
+    print("Bot is running smoothly...")
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling(drop_pending_updates=True)
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
     asyncio.run(main_async())
