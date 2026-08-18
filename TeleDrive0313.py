@@ -147,35 +147,64 @@ async def weekly_backup_job(context: ContextTypes.DEFAULT_TYPE):
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
-        await update.message.reply_text("TeleDrive Bot (Developed by @iamemon13) সফলভাবে চালু আছে ✅")
+        await update.message.reply_text(
+            "TeleDrive Bot (Developed by @iamemon13) চালু আছে ✅\n\n"
+            "📌 কমান্ডসমূহ:\n"
+            "• /search কিওয়ার্ড - ফাইল খুঁজুন\n"
+            "• /stats - ড্রাইভের মোট ফাইলের হিসেব দেখুন\n"
+            "• /backup_now - বিগত ৭ দিনের নতুন ফাইলগুলো ব্যাকআপ চ্যানেলে ফরোয়ার্ড করুন\n"
+            "• /encrypt পাসওয়ার্ড টেক্সট - টেক্সট লক করুন\n"
+            "• /decrypt পাসওয়ার্ড টেক্সট - টেক্সট আনলক করুন\n"
+            "• Inline Search: অন্য কোনো চ্যাটে `@TeleDrive0313_bot keyword` টাইপ করে ফাইল শেয়ার করুন।"
+        )
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message: return
     total_files = files_col.count_documents({})
-    await update.message.reply_text(f"📊 Total Files in TeleDrive: {total_files}")
+    photos = files_col.count_documents({"file_type": "photo"})
+    videos = files_col.count_documents({"file_type": "video"})
+    documents = files_col.count_documents({"file_type": "document"})
+    await update.message.reply_text(
+        f"📊 **TeleDrive Storage Statistics**\n\n"
+        f"📷 Photos: {photos}\n"
+        f"🎥 Videos: {videos}\n"
+        f"📄 Documents: {documents}\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"📁 Total Files: {total_files}",
+        parse_mode="Markdown"
+    )
 
 async def backup_now_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message: return
+    await update.message.reply_text("🔄 ব্যাকআপ প্রক্রিয়া শুরু হচ্ছে...")
     count = await perform_weekly_forward_backup(context.bot)
     await update.message.reply_text(f"✅ ব্যাকআপ সফল! মোট {count} টি ফাইল ফরোয়ার্ড করা হয়েছে।")
 
 async def encrypt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or len(context.args) < 2: return
+    if not update.message or len(context.args) < 2:
+        await update.message.reply_text("ব্যবহার: /encrypt <পাসওয়ার্ড> <আপনার টেক্সট>")
+        return
     key, raw_text = context.args[0], " ".join(context.args[1:])
-    await update.message.reply_text(f"🔐 `{cipher_text(raw_text, key)}`", parse_mode="Markdown")
+    await update.message.reply_text(f"🔐 **Encrypted:**\n`{cipher_text(raw_text, key)}`", parse_mode="Markdown")
 
 async def decrypt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or len(context.args) < 2: return
+    if not update.message or len(context.args) < 2:
+        await update.message.reply_text("ব্যবহার: /decrypt <পাসওয়ার্ড> <লক করা টেক্সট>")
+        return
     key, ciphered_text = context.args[0], " ".join(context.args[1:])
-    await update.message.reply_text(f"🔓 {cipher_text(ciphered_text, key, decrypt=True)}")
+    await update.message.reply_text(f"🔓 **Decrypted:**\n{cipher_text(ciphered_text, key, decrypt=True)}")
 
 async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not context.args: return
-    results = search_files(" ".join(context.args))
-    if not results:
-        await update.message.reply_text("কিছু পাওয়া যায়নি।")
+    if not update.message: return
+    if not context.args:
+        await update.message.reply_text("ব্যবহার: /search <কিওয়ার্ড>")
         return
-    lines = [f"🔍 রেজাল্ট:\n"]
+    keyword = " ".join(context.args)
+    results = search_files(keyword)
+    if not results:
+        await update.message.reply_text(f"'{keyword}' দিয়ে কিছু পাওয়া যায়নি।")
+        return
+    lines = [f"🔍 '{keyword}' এর জন্য রেজাল্ট:\n"]
     for item in results:
         lines.append(f"• [{item.get('file_type')}] {item.get('file_name')}")
     await update.message.reply_text("\n".join(lines))
@@ -198,9 +227,8 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if message is None or message.chat_id != GROUP_ID or message.message_thread_id in IGNORE_THREAD_IDS: return
 
     file_type = "photo" if message.photo else "video" if message.video else "document"
-    
-    # কপি করার লজিক
     target_thread = TOPIC_IDS.get(file_type, 12)
+    
     copied = await context.bot.copy_message(
         chat_id=GROUP_ID,
         from_chat_id=GROUP_ID,
@@ -209,7 +237,6 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption=(message.caption or "") + f"\n\n#{file_type} #TeleDrive"
     )
     
-    # চ্যানেল কপি ও ডাটাবেস সেভ
     try:
         c_copied = await context.bot.copy_message(chat_id=CHANNEL_ID, from_chat_id=GROUP_ID, message_id=message.message_id)
         save_file_record(file_type, f"{file_type}_{message.message_id}", message.caption, target_thread, copied.message_id, c_copied.message_id)
@@ -221,22 +248,20 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def main_async():
     keep_alive()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-    # হ্যান্ডলার যোগ করা
-    app.add_handlers([
-        CommandHandler("start", start_command),
-        CommandHandler("search", search_command),
-        CommandHandler("stats", stats_command),
-        CommandHandler("backup_now", backup_now_command),
-        CommandHandler("encrypt", encrypt_command),
-        CommandHandler("decrypt", decrypt_command),
-        InlineQueryHandler(inline_search),
-        MessageHandler(filters.PHOTO | filters.VIDEO | filters.Document.ALL, handle_file)
-    ])
+    
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("search", search_command))
+    app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("backup_now", backup_now_command))
+    app.add_handler(CommandHandler("encrypt", encrypt_command))
+    app.add_handler(CommandHandler("decrypt", decrypt_command))
+    app.add_handler(InlineQueryHandler(inline_search))
+    app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.Document.ALL, handle_file))
     
     if app.job_queue:
         app.job_queue.run_repeating(weekly_backup_job, interval=604800, first=15)
 
-    print("TeleDrive Bot is running strictly on Env Vars...")
+    print("TeleDrive Bot with full commands is running...")
     async with app:
         await app.initialize()
         await app.start()
@@ -245,4 +270,4 @@ async def main_async():
 
 if __name__ == "__main__":
     asyncio.run(main_async())
-    
+        
