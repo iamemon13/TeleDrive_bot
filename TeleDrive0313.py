@@ -93,61 +93,52 @@ def whatsapp_webhook():
                                 send_whatsapp_message(sender_phone, f"Hello! Received your text: {message_body}")
                                 send_to_telegram_group(f"📱 WhatsApp থেকে প্রাপ্ত টেক্সট:\n{message_body}")
                         
-                        # ২. যদি ছবি (image) হয়
-                        elif msg_type == 'image':
-                            image_data = message.get('image', {})
-                            media_id = image_data.get('id')
-                            caption = image_data.get('caption', '')
-                            if media_id:
-                                image_bytes = download_whatsapp_media(media_id)
-                                if image_bytes:
-                                    send_whatsapp_message(sender_phone, "ছবিটি পাওয়া গেছে! টেলিগ্রাম ড্রাইভে পাঠানো হচ্ছে...")
-                                    send_photo_bytes_to_telegram(image_bytes, f"📱 WhatsApp Photo (নম্বর: {sender_phone})\n{caption}")
-                                else:
-                                    logger.error("Failed to download WhatsApp image bytes.")
-                        
-                        # ৩. যদি ডকুমেন্ট বা ভিডিও হয়
-                        elif msg_type in ['document', 'video']:
+                        # ২. যদি ছবি (image) বা ডকুমেন্ট/ভিডিও হয়
+                        elif msg_type in ['image', 'document', 'video']:
                             media_data = message.get(msg_type, {})
                             media_id = media_data.get('id')
                             caption = media_data.get('caption', '')
                             if media_id:
-                                file_url = get_whatsapp_media_url(media_id)
+                                file_url, mime_type = get_whatsapp_media_details(media_id)
                                 if file_url:
                                     send_whatsapp_message(sender_phone, "ফাইলটি পাওয়া গেছে! টেলিগ্রাম ড্রাইভে পাঠানো হচ্ছে...")
-                                    send_to_telegram_group(f"📱 WhatsApp থেকে একটি {msg_type} এসেছে। (নম্বর: {sender_phone})\nলিংক: {file_url}\n{caption}")
+                                    
+                                    # ফাইল বাইট সরাসরি ডাউনলোড করে টেলিগ্রাম গ্রুপে পাঠানো
+                                    file_bytes = download_bytes_from_url(file_url)
+                                    if file_bytes:
+                                        if msg_type == 'image':
+                                            send_photo_bytes_to_telegram(file_bytes, f"📱 WhatsApp Photo ({sender_phone})\n{caption}")
+                                        else:
+                                            send_document_bytes_to_telegram(file_bytes, f"📱 WhatsApp {msg_type} ({sender_phone})\n{caption}", f"media_{media_id}.jpg" if msg_type=='image' else f"file_{media_id}")
+                                    else:
+                                        # ব্যাকআপ হিসেবে লিংক পাঠিয়ে দেওয়া যদি বাইট ডাউনলোড ফেইল করে
+                                        send_to_telegram_group(f"📱 WhatsApp থেকে একটি {msg_type} এসেছে (নম্বর: {sender_phone})\nডাউনলোড লিংক: {file_url}\n{caption}")
 
         except Exception as e:
             logger.error(f"Error processing WhatsApp message: {e}")
 
         return jsonify({"status": "success"}), 200
 
-def get_whatsapp_media_url(media_id):
-    """মেটার সার্ভার থেকে মিডিয়ার ডাউনলোডেবল লিংক বের করার ফাংশন"""
+def get_whatsapp_media_details(media_id):
+    """মেটার সার্ভার থেকে মিডিয়ার ডাউনলোডেবল লিংক এবং মাইম টাইপ বের করার ফাংশন"""
     url = f"https://graph.facebook.com/v22.0/{media_id}"
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
     try:
         response = requests.get(url, headers=headers)
         res_json = response.json()
-        return res_json.get("url")
+        return res_json.get("url"), res_json.get("mime_type")
     except Exception as e:
-        logger.error(f"Failed to get media URL: {e}")
-        return None
+        logger.error(f"Failed to get media details: {e}")
+        return None, None
 
-def download_whatsapp_media(media_id):
-    """মেটার সার্ভার থেকে ছবির বাইনারি ডাটা সরাসরি ডাউনলোড করার ফাংশন"""
+def download_bytes_from_url(file_url):
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
     try:
-        url_meta = requests.get(f"https://graph.facebook.com/v22.0/{media_id}", headers=headers).json()
-        file_url = url_meta.get("url")
-        if not file_url:
-            return None
-        
-        media_response = requests.get(file_url, headers=headers)
-        if media_response.status_code == 200:
-            return media_response.content
+        res = requests.get(file_url, headers=headers)
+        if res.status_code == 200:
+            return res.content
     except Exception as e:
-        logger.error(f"Failed to download WhatsApp media bytes: {e}")
+        logger.error(f"Failed to download bytes from URL: {e}")
     return None
 
 def send_whatsapp_message(recipient_phone, text_message):
@@ -168,7 +159,6 @@ def send_whatsapp_message(recipient_phone, text_message):
         logger.error(f"Failed to send WhatsApp message: {e}")
 
 def send_to_telegram_group(text):
-    """হোয়াটসঅ্যাপের টেক্সট সরাসরি টেলিগ্রাম গ্রুপে পাঠানোর ফাংশন"""
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": GROUP_ID,
@@ -180,7 +170,6 @@ def send_to_telegram_group(text):
         logger.error(f"Failed to send to Telegram group: {e}")
 
 def send_photo_bytes_to_telegram(photo_bytes, caption):
-    """ডাউনলোড করা ছবির বাইনারি ফাইলটি টেলিগ্রাম গ্রুপের Photo টপিকে আপলোড করার ফাংশন"""
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
     photo_topic_id = TOPIC_IDS.get("photo", 6)
     files = {"photo": ("whatsapp_photo.jpg", io.BytesIO(photo_bytes))}
@@ -192,7 +181,21 @@ def send_photo_bytes_to_telegram(photo_bytes, caption):
     try:
         requests.post(url, data=data, files=files)
     except Exception as e:
-        logger.error(f"Failed to send photo bytes to Telegram group: {e}")
+        logger.error(f"Failed to send photo bytes: {e}")
+
+def send_document_bytes_to_telegram(doc_bytes, caption, filename):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
+    doc_topic_id = TOPIC_IDS.get("document", 12)
+    files = {"document": (filename, io.BytesIO(doc_bytes))}
+    data = {
+        "chat_id": GROUP_ID,
+        "message_thread_id": doc_topic_id,
+        "caption": caption
+    }
+    try:
+        requests.post(url, data=data, files=files)
+    except Exception as e:
+        logger.error(f"Failed to send document bytes: {e}")
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
@@ -261,7 +264,6 @@ async def perform_weekly_forward_backup(bot):
     recent_files = list(files_col.find({"date": {"$gte": one_week_ago}}))
     
     if not recent_files:
-        logger.info("No new files found in the last 7 days for backup.")
         return 0
 
     count = 0
@@ -277,224 +279,104 @@ async def perform_weekly_forward_backup(bot):
                 count += 1
                 await asyncio.sleep(1)
             except Exception as e:
-                logger.error(f"Failed to forward message id {msg_id}: {e}")
-
+                logger.error(f"Failed to forward message: {e}")
     return count
 
 async def weekly_backup_job(context: ContextTypes.DEFAULT_TYPE):
-    logger.info("Starting scheduled weekly auto-forward backup...")
-    count = await perform_weekly_forward_backup(context.bot)
-    logger.info(f"Weekly Auto-Forward Backup Completed. Total forwarded: {count} files.")
+    await perform_weekly_forward_backup(context.bot)
 
 # ============ TELEGRAM HANDLERS ============
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
-        await update.message.reply_text(
-            "TeleDrive & WhatsApp Bridge Bot (Developed by @iamemon13) চালু আছে ✅\n\n"
-            "📌 টেলিগ্রাম কমান্ডসমূহ:\n"
-            "• /search কিওয়ার্ড - ফাইল খুঁজুন\n"
-            "• /stats - ড্রাইভের মোট ফাইলের হিসেব দেখুন\n"
-            "• /backup_now - বিগত ৭ দিনের নতুন ফাইলগুলো ব্যাকআপ চ্যানেলে ফরোয়ার্ড করুন\n"
-            "• /encrypt পাসওয়ার্ড টেক্সট - টেক্সট লক করুন\n"
-            "• /decrypt পাসওয়ার্ড টেক্সট - টেক্সট আনলক করুন"
-        )
+        await update.message.reply_text("TeleDrive & WhatsApp Bridge Bot (Developed by @iamemon13) চালু আছে ✅")
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
-
     total_files = files_col.count_documents({})
-    photos = files_col.count_documents({"file_type": "photo"})
-    videos = files_col.count_documents({"file_type": "video"})
-    documents = files_col.count_documents({"file_type": "document"})
-
-    msg = (
-        "📊 **TeleDrive Storage Statistics**\n\n"
-        f"📷 Photos: {photos}\n"
-        f"🎥 Videos: {videos}\n"
-        f"📄 Documents: {documents}\n"
-        f"━━━━━━━━━━━━━━━\n"
-        f"📁 Total Files: {total_files}"
-    )
-    await update.message.reply_text(msg, parse_mode="Markdown")
+    await update.message.reply_text(f"📊 Total Files in TeleDrive: {total_files}")
 
 async def backup_now_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
-
-    await update.message.reply_text("🔄 বিগত ৭ দিনের নতুন ফাইলগুলো ব্যাকআপ চ্যানেলে ফরোয়ার্ড করা শুরু হচ্ছে...")
     count = await perform_weekly_forward_backup(context.bot)
-    
-    if count > 0:
-        await update.message.reply_text(f"✅ ব্যাকআপ সফল! বিগত ৭ দিনের মোট {count} টি নতুন ফাইল ব্যাকআপ চ্যানেলে ফরোয়ার্ড করা হয়েছে।")
-    else:
-        await update.message.reply_text("ℹ️ বিগত ৭ দিনের মধ্যে ড্রাইভ বা গ্রুপে নতুন কোনো ফাইল আপলোড হয়নি।")
+    await update.message.reply_text(f"✅ ব্যাকআপ সফল! মোট {count} টি ফাইল ফরোয়ার্ড করা হয়েছে।")
 
 async def encrypt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or len(context.args) < 2:
-        await update.message.reply_text("ব্যবহার: /encrypt <পাসওয়ার্ড> <আপনার গোপন তথ্য>")
+        await update.message.reply_text("ব্যবহার: /encrypt <পাসওয়ার্ড> <টেক্সট>")
         return
-    
     key = context.args[0]
     raw_text = " ".join(context.args[1:])
-    encrypted = cipher_text(raw_text, key)
-    
-    await update.message.reply_text(f"🔐 **Encrypted Data:**\n`{encrypted}`", parse_mode="Markdown")
+    await update.message.reply_text(f"🔐 `{cipher_text(raw_text, key)}`", parse_mode="Markdown")
 
 async def decrypt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or len(context.args) < 2:
-        await update.message.reply_text("ব্যবহার: /decrypt <পাসওয়ার্ড> <লক করা টেক্সট>")
+        await update.message.reply_text("ব্যবহার: /decrypt <পাসওয়ার্ড> <টেক্সট>")
         return
-    
     key = context.args[0]
     ciphered_text = " ".join(context.args[1:])
-    decrypted = cipher_text(ciphered_text, key, decrypt=True)
-    
-    await update.message.reply_text(f"🔓 **Decrypted Data:**\n{decrypted}")
+    await update.message.reply_text(f"🔓 {cipher_text(ciphered_text, key, decrypt=True)}")
 
 async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message:
+    if not update.message or not context.args:
         return
-
-    if not context.args:
-        await update.message.reply_text("ব্যবহার: /search কিওয়ার্ড\nযেমন: /search cv")
-        return
-
     keyword = " ".join(context.args)
     results = search_files(keyword)
-
     if not results:
-        await update.message.reply_text(f"'{keyword}' দিয়ে কিছু পাওয়া যায়নি।")
+        await update.message.reply_text("কিছু পাওয়া যায়নি।")
         return
-
-    lines = [f"🔍 '{keyword}' এর জন্য {len(results)}টা রেজাল্ট:\n"]
+    lines = [f"🔍 রেজাল্ট:\n"]
     for item in results:
-        date_str = item.get("date", "").split("T")[0]
-        clean_channel_id = str(CHANNEL_ID).replace("-100", "")
-        link = f"https://t.me/c/{clean_channel_id}/{item.get('channel_msg_id')}" if item.get('channel_msg_id') else "#"
-        
-        lines.append(f"• [{item.get('file_type')}] [{item.get('file_name')}]({link}) — {date_str}")
-        if item.get("caption"):
-            lines.append(f"   caption: {item.get('caption')[:60]}")
-
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown", disable_web_page_preview=True)
+        lines.append(f"• [{item.get('file_type')}] {item.get('file_name')}")
+    await update.message.reply_text("\n".join(lines))
 
 async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.inline_query.query
     if not query:
         return
-
     results = search_files(query)
-    inline_results = []
-
-    for item in results:
-        clean_channel_id = str(CHANNEL_ID).replace("-100", "")
-        link = f"https://t.me/c/{clean_channel_id}/{item.get('channel_msg_id')}" if item.get('channel_msg_id') else "#"
-        
-        content = (
-            f"📁 **File:** {item.get('file_name')}\n"
-            f"📌 **Type:** {item.get('file_type')}\n"
-            f"🔗 **Link:** [Open in Channel]({link})"
-        )
-        
-        inline_results.append(
-            InlineQueryResultArticle(
-                id=str(item.get("_id")),
-                title=f"[{item.get('file_type').upper()}] {item.get('file_name')}",
-                description=item.get("caption") or "TeleDrive File",
-                input_message_content=InputTextMessageContent(content, parse_mode="Markdown", disable_web_page_preview=True)
-            )
-        )
-
-    await update.inline_query.answer(inline_results[:10])
+    inline_results = [
+        InlineQueryResultArticle(
+            id=str(item.get("_id")),
+            title=f"[{item.get('file_type')}] {item.get('file_name')}",
+            input_message_content=InputTextMessageContent(item.get('file_name'))
+        ) for item in results[:10]
+    ]
+    await update.inline_query.answer(inline_results)
 
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.effective_message
-    if message is None or message.chat_id != GROUP_ID:
+    if message is None or message.chat_id != GROUP_ID or message.message_thread_id in IGNORE_THREAD_IDS:
         return
 
-    if message.message_thread_id in IGNORE_THREAD_IDS:
-        return
-
-    file_type = None
-    file_name = None
-
+    file_type = "document"
+    file_name = f"file_{message.message_id}"
     if message.photo:
         file_type = "photo"
         file_name = f"photo_{message.message_id}.jpg"
     elif message.video:
         file_type = "video"
         file_name = message.video.file_name or f"video_{message.message_id}.mp4"
-    elif message.document:
-        doc = message.document
-        file_name = doc.file_name or f"doc_{message.message_id}"
-        mime_type = doc.mime_type or ""
-        ext = os.path.splitext(file_name)[1].lower()
 
-        if mime_type.startswith("image/") or ext in ['.jpg', '.jpeg', '.png', '.webp', '.heic']:
-            file_type = "photo"
-        elif mime_type.startswith("video/") or ext in ['.mp4', '.mkv', '.mov', '.avi']:
-            file_type = "video"
-        else:
-            file_type = "document"
-    else:
-        return
-
-    if is_duplicate(file_name, message.caption):
-        logger.info("Duplicate file skipped: %s", file_name)
-        return
-
-    target_thread = TOPIC_IDS.get(file_type)
-    if target_thread is None:
-        logger.warning("No topic configured for file_type=%s", file_type)
-        return
-
-    hashtags = f"\n\n#{file_type} #TeleDrive"
-    new_caption = (message.caption or "") + hashtags
-
+    target_thread = TOPIC_IDS.get(file_type, 12)
     copied = await context.bot.copy_message(
         chat_id=GROUP_ID,
         from_chat_id=GROUP_ID,
         message_id=message.message_id,
         message_thread_id=target_thread,
-        caption=new_caption
+        caption=(message.caption or "") + f"\n\n#{file_type} #TeleDrive"
     )
-
-    channel_msg_id = None
-    try:
-        channel_copied = await context.bot.copy_message(
-            chat_id=CHANNEL_ID,
-            from_chat_id=GROUP_ID,
-            message_id=message.message_id,
-            caption=new_caption
-        )
-        channel_msg_id = channel_copied.message_id
-        logger.info("Uploaded %s to Channel", file_name)
-    except Exception as e:
-        logger.error("Failed to copy to channel: %s", e)
-
-    save_file_record(
-        file_type=file_type,
-        file_name=file_name,
-        caption=message.caption,
-        thread_id=target_thread,
-        message_id=copied.message_id,
-        channel_msg_id=channel_msg_id
-    )
-
-    logger.info("Organized %s -> topic %s", file_name, target_thread)
+    save_file_record(file_type, file_name, message.caption, target_thread, copied.message_id)
 
 # ============ MAIN ============
 
 async def main_async():
-    # প্রথমে ব্যাকগ্রাউন্ডে ফ্লাস্ক ও হোয়াটসঅ্যাপ ওয়েব হুক সার্ভার চালু করা হচ্ছে
     flask_thread = Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
-    logger.info("Flask Webhook Server started in background thread.")
 
-    # টেলিগ্রাম বট অ্যাপ ইনিশিয়ালাইজেশন
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start_command))
@@ -504,21 +386,10 @@ async def main_async():
     app.add_handler(CommandHandler("encrypt", encrypt_command))
     app.add_handler(CommandHandler("decrypt", decrypt_command))
     app.add_handler(InlineQueryHandler(inline_search))
-    
-    app.add_handler(
-        MessageHandler(
-            filters.PHOTO | filters.VIDEO | filters.Document.ALL, handle_file
-        )
-    )
+    app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.Document.ALL, handle_file))
 
     if app.job_queue:
-        app.job_queue.run_repeating(
-            weekly_backup_job,
-            interval=604800,
-            first=15
-        )
-
-    logger.info("TeleDrive & WhatsApp Bridge Bot by iamemon13 starting polling...")
+        app.job_queue.run_repeating(weekly_backup_job, interval=604800, first=15)
 
     async with app:
         await app.initialize()
@@ -528,4 +399,3 @@ async def main_async():
 
 if __name__ == "__main__":
     asyncio.run(main_async())
-    
