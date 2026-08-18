@@ -1,5 +1,4 @@
 python-telegram-bot[job-queue]
 pymongo
 dnspython
-requests
-apscheduler
+flask
