@@ -1,9 +1,9 @@
 """
-Telegram Drive Organizer Bot
-------------------------------
+TeleDrive & WhatsApp Bridge Organizer Bot
+------------------------------------------
 Developer: iamemon13
 Bot Name: TeleDrive0313
-Features: Multi-topic, MongoDB, Inline Search, Duplicate Check, Direct Link, Encryption & Weekly Auto-Forward Backup
+Features: Multi-topic, MongoDB, Inline Search, Duplicate Check, Direct Link, Encryption, Weekly Auto-Forward Backup & WhatsApp Webhook Integration
 """
 
 import asyncio
@@ -11,10 +11,11 @@ import io
 import json
 import logging
 import os
+import requests
 from datetime import datetime, timedelta
 from threading import Thread
 from urllib.parse import quote_plus
-from flask import Flask
+from flask import Flask, request, jsonify
 from pymongo import MongoClient
 
 from telegram import Update, InlineQueryResultArticle, InputTextMessageContent
@@ -36,9 +37,12 @@ MONGO_URI = f"mongodb+srv://TeleDrive0313_bot:{DB_PASSWORD}@cluster0.xvifgpb.mon
 
 GROUP_ID = -1004449101180
 CHANNEL_ID = -1004304201011
-
-# 📌 আপনার প্রাইভেট ব্যাকআপ চ্যানেলের আইডি এখানে দিন (যেখানে প্রতি সপ্তাহে ফাইলগুলো ফরওয়ার্ড হবে)
 BACKUP_CHANNEL_ID = -1004304201011  
+
+# WhatsApp API Config (আপনার মেটা ডেভেলপার অ্যাকাউন্ট থেকে প্রাপ্ত তথ্য এখানে দিন)
+WHATSAPP_TOKEN = "আপনার_হোয়াটসঅ্যাপ_টোকেন_এখানে_দিন"
+PHONE_NUMBER_ID = "আপনার_ফোন_নম্বর_আইডি_এখানে_দিন"
+VERIFY_TOKEN = "mamon123"  # মেটা ওয়েব হুক ভেরিফিকেশনের জন্য ইচ্ছামতো টোকেন
 
 TOPIC_IDS = {
     "photo": 6,      # 📷 Photos topic id
@@ -48,13 +52,92 @@ TOPIC_IDS = {
 
 IGNORE_THREAD_IDS = set(TOPIC_IDS.values())
 
-# ============ RENDER KEEP ALIVE SERVER ============
+# ============ FLASK & WHATSAPP WEBHOOK SERVER ============
 
 app_flask = Flask('')
 
 @app_flask.route('/')
 def home():
-    return "TeleDrive Bot is running alive!"
+    return "TeleDrive & WhatsApp Bridge Bot is running alive!"
+
+# হোয়াটসঅ্যাপ মেসেজ রিসিভ করার ওয়েব হুক রুট
+@app_flask.route('/webhook', methods=['GET', 'POST'])
+def whatsapp_webhook():
+    if request.method == 'GET':
+        # মেটা ওয়েব হুক ভেরিফিকেশন
+        mode = request.args.get('hub.mode')
+        token = request.args.get('hub.verify_token')
+        challenge = request.args.get('hub.challenge')
+        
+        if mode == 'subscribe' and token == VERIFY_TOKEN:
+            return challenge, 200
+        return 'Verification failed', 403
+
+    elif request.method == 'POST':
+        data = request.json
+        logger.info(f"Received WhatsApp Data: {json.dumps(data)}")
+        
+        try:
+            # মেসেজ এক্সট্রাক্ট করা
+            entry = data.get('entry', [{}])[0]
+            change = entry.get('changes', [{}])[0]
+            value = change.get('value', {})
+            messages = value.get('messages', [])
+
+            if messages:
+                msg = messages[0]
+                sender_phone = msg.get('from')
+                msg_type = msg.get('type')
+                
+                # যদি টেক্সট মেসেজ হয়
+                if msg_type == 'text':
+                    incoming_text = msg.get('text', {}).get('body', '')
+                    reply_text = f"WhatsApp থেকে রিসিভ হয়েছে: {incoming_text}"
+                    send_whatsapp_message(sender_phone, reply_text)
+                    
+                    # অপশনাল: হোয়াটসঅ্যাপের টেক্সটটি টেলিগ্রাম গ্রুপেও পাঠিয়ে দিতে পারেন
+                    # send_to_telegram_group(f"📱 WhatsApp থেকে প্রাপ্ত:\n{incoming_text}")
+
+                # যদি মিডিয়া বা ডকুমেন্ট হয় (ভবিষ্যৎ এক্সটেনশনের জন্য)
+                elif msg_type in ['document', 'image', 'video']:
+                    send_whatsapp_message(sender_phone, "ফাইলটি পাওয়া গেছে! টেলিগ্রামে ফরোয়ার্ড করা হচ্ছে...")
+                    # এখানে মিডিয়া ডাউনলোড করে টেলিগ্রামে পাঠানোর লজিক যুক্ত করা যাবে
+
+        except Exception as e:
+            logger.error(f"Error processing WhatsApp webhook: {e}")
+
+        return jsonify({"status": "success"}), 200
+
+def send_whatsapp_message(recipient_phone, message_body):
+    """হোয়াটসঅ্যাপে ব্যাক-রিপ্লাই পাঠানোর ফাংশন"""
+    url = f"https://graph.facebook.com/v21.0/{PHONE_NUMBER_ID}/messages"
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": recipient_phone,
+        "type": "text",
+        "text": {"body": message_body}
+    }
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        logger.info(f"WhatsApp Response: {response.status_code}")
+    except Exception as e:
+        logger.error(f"Failed to send WhatsApp message: {e}")
+
+def send_to_telegram_group(text):
+    """টেলিগ্রাম গ্রুপে সরাসরি মেসেজ পাঠানোর ফাংশন"""
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": GROUP_ID,
+        "text": text
+    }
+    try:
+        requests.post(url, json=payload)
+    except Exception as e:
+        logger.error(f"Failed to send to Telegram group: {e}")
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
@@ -79,7 +162,6 @@ client = MongoClient(MONGO_URI)
 db = client["teledrive_db"]
 files_col = db["files"]
 
-# Duplicate Checker
 def is_duplicate(file_name, caption):
     query = {"file_name": file_name}
     if caption:
@@ -109,7 +191,6 @@ def search_files(keyword):
     results = files_col.find(query).sort("_id", -1).limit(20)
     return list(results)
 
-# Feature 2: Simple Security Cipher for Sensitive Text
 def cipher_text(text, key, decrypt=False):
     shift = sum(ord(c) for c in key) % 26
     if decrypt:
@@ -126,10 +207,7 @@ def cipher_text(text, key, decrypt=False):
 # ============ WEEKLY FORWARD BACKUP LOGIC ============
 
 async def perform_weekly_forward_backup(bot):
-    """বিগত ৭ দিনের নতুন ফাইলগুলো হ্যাশট্যাগ সহ প্রাইভেট ব্যাকআপ চ্যানেলে ফরওয়ার্ড করবে"""
     one_week_ago = (datetime.now() - timedelta(days=7)).isoformat()
-    
-    # বিগত ৭ দিনের নতুন ফাইলগুলো ডাটাবেজ থেকে ফিল্টার করা
     recent_files = list(files_col.find({"date": {"$gte": one_week_ago}}))
     
     if not recent_files:
@@ -141,41 +219,37 @@ async def perform_weekly_forward_backup(bot):
         msg_id = item.get("message_id")
         if msg_id:
             try:
-                # মূল গ্রুপ থেকে ব্যাকআপ চ্যানেলে ফাইল ফরওয়ার্ড করা
                 await bot.forward_message(
                     chat_id=BACKUP_CHANNEL_ID,
                     from_chat_id=GROUP_ID,
                     message_id=msg_id
                 )
                 count += 1
-                await asyncio.sleep(1) # টেলিগ্রাম ফ্লাডিং এড়াতে ছোট বিরতি
+                await asyncio.sleep(1)
             except Exception as e:
                 logger.error(f"Failed to forward message id {msg_id}: {e}")
 
     return count
 
 async def weekly_backup_job(context: ContextTypes.DEFAULT_TYPE):
-    """সাপ্তাহিক অটোমেটিক জব যা প্রতি ৭ দিন পরপর রান হবে"""
     logger.info("Starting scheduled weekly auto-forward backup...")
     count = await perform_weekly_forward_backup(context.bot)
     logger.info(f"Weekly Auto-Forward Backup Completed. Total forwarded: {count} files.")
 
-# ============ HANDLERS ============
+# ============ TELEGRAM HANDLERS ============
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
         await update.message.reply_text(
-            "TeleDrive Bot (Developed by @iamemon13) চালু আছে ✅\n\n"
+            "TeleDrive & WhatsApp Bridge Bot (Developed by @iamemon13) চালু আছে ✅\n\n"
             "📌 কমান্ডসমূহ:\n"
             "• /search কিওয়ার্ড - ফাইল খুঁজুন\n"
             "• /stats - ড্রাইভের মোট ফাইলের হিসেব দেখুন\n"
             "• /backup_now - বিগত ৭ দিনের নতুন ফাইলগুলো ব্যাকআপ চ্যানেলে ফরোয়ার্ড করুন\n"
             "• /encrypt পাসওয়ার্ড টেক্সট - টেক্সট লক করুন\n"
-            "• /decrypt পাসওয়ার্ড টেক্সট - টেক্সট আনলক করুন\n"
-            "• Inline Search: অন্য কোনো চ্যাটে `@TeleDrive0313_bot keyword` টাইপ করে ফাইল শেয়ার করুন।"
+            "• /decrypt পাসওয়ার্ড টেক্সট - টেক্সট আনলক করুন"
         )
 
-# Phase 1: Statistics Command
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
@@ -195,7 +269,6 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-# Weekly Backup Manual Trigger Command (/backup_now)
 async def backup_now_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
@@ -208,7 +281,6 @@ async def backup_now_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     else:
         await update.message.reply_text("ℹ️ বিগত ৭ দিনের মধ্যে ড্রাইভ বা গ্রুপে নতুন কোনো ফাইল আপলোড হয়নি।")
 
-# Feature 2: Encryption/Decryption Commands
 async def encrypt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or len(context.args) < 2:
         await update.message.reply_text("ব্যবহার: /encrypt <পাসওয়ার্ড> <আপনার গোপন তথ্য>")
@@ -249,7 +321,6 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = [f"🔍 '{keyword}' এর জন্য {len(results)}টা রেজাল্ট:\n"]
     for item in results:
         date_str = item.get("date", "").split("T")[0]
-        # Phase 3: Channel Link Generation
         clean_channel_id = str(CHANNEL_ID).replace("-100", "")
         link = f"https://t.me/c/{clean_channel_id}/{item.get('channel_msg_id')}" if item.get('channel_msg_id') else "#"
         
@@ -259,7 +330,6 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown", disable_web_page_preview=True)
 
-# Phase 2: Inline Search Feature
 async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.inline_query.query
     if not query:
@@ -321,7 +391,6 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         return
 
-    # Phase 2: Duplicate Check Verification
     if is_duplicate(file_name, message.caption):
         logger.info("Duplicate file skipped: %s", file_name)
         return
@@ -331,11 +400,9 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.warning("No topic configured for file_type=%s", file_type)
         return
 
-    # Phase 1: Category Hashtags Addition (#photo, #video ইত্যাদি সহ)
     hashtags = f"\n\n#{file_type} #TeleDrive"
     new_caption = (message.caption or "") + hashtags
 
-    # ১. নির্দিষ্ট Topic এ কপি করা
     copied = await context.bot.copy_message(
         chat_id=GROUP_ID,
         from_chat_id=GROUP_ID,
@@ -344,7 +411,6 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption=new_caption
     )
 
-    # ২. চ্যানেল এ কপি করা (Channel Upload)
     channel_msg_id = None
     try:
         channel_copied = await context.bot.copy_message(
@@ -358,7 +424,6 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error("Failed to copy to channel: %s", e)
 
-    # ৩. MongoDB এ সেভ করা (Phase 3 Link ID সহ)
     save_file_record(
         file_type=file_type,
         file_name=file_name,
@@ -389,23 +454,22 @@ async def main_async():
         )
     )
 
-    # 🗓️ অটোমেটিক সাপ্তাহিক ব্যাকআপ সিডিউলার (প্রতি ৭ দিন পর পর স্বয়ংক্রিয়ভাবে বিগত সপ্তাহের নতুন ফাইলগুলো ফরোয়ার্ড করবে)
     if app.job_queue:
         app.job_queue.run_repeating(
             weekly_backup_job,
-            interval=604800,  # ৬৪৮০০ সেকেন্ড = ৭ দিন
-            first=15          # বট স্টার্ট হওয়ার ১৫ সেকেন্ড পর প্রথমবার চেক করবে
+            interval=604800,
+            first=15
         )
 
-    logger.info("TeleDrive Bot with Auto-Forward Weekly Backup by iamemon13 starting...")
+    logger.info("TeleDrive & WhatsApp Bridge Bot by iamemon13 starting...")
 
     async with app:
         await app.initialize()
         await app.start()
         await app.updater.start_polling(drop_pending_updates=True)
-        await asyncio.Event().wait()
+        asyncio.Event().wait()
 
 if __name__ == "__main__":
-    keep_alive()  # Render Web Service-এর জন্য ব্যাকগ্রাউন্ড পোর্ট ওপেন থাকবে
+    keep_alive()  # ফ্লাস্ক সার্ভার ও ওয়েব হুক চালু রাখবে
     asyncio.run(main_async())
     
