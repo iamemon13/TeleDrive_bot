@@ -103,6 +103,8 @@ def whatsapp_webhook():
                                 if image_bytes:
                                     send_whatsapp_message(sender_phone, "ছবিটি পাওয়া গেছে! টেলিগ্রাম ড্রাইভে পাঠানো হচ্ছে...")
                                     send_photo_bytes_to_telegram(image_bytes, f"📱 WhatsApp Photo (নম্বর: {sender_phone})\n{caption}")
+                                else:
+                                    logger.error("Failed to download WhatsApp image bytes.")
                         
                         # ৩. যদি ডকুমেন্ট বা ভিডিও হয়
                         elif msg_type in ['document', 'video']:
@@ -194,12 +196,7 @@ def send_photo_bytes_to_telegram(photo_bytes, caption):
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
-    app_flask.run(host='0.0.0.0', port=port)
-
-def keep_alive():
-    t = Thread(target=run_flask)
-    t.daemon = True
-    t.start()
+    app_flask.run(host='0.0.0.0', port=port, use_reloader=False)
 
 # ============ LOGGING ============
 
@@ -491,6 +488,13 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ============ MAIN ============
 
 async def main_async():
+    # প্রথমে ব্যাকগ্রাউন্ডে ফ্লাস্ক ও হোয়াটসঅ্যাপ ওয়েব হুক সার্ভার চালু করা হচ্ছে
+    flask_thread = Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+    logger.info("Flask Webhook Server started in background thread.")
+
+    # টেলিগ্রাম বট অ্যাপ ইনিশিয়ালাইজেশন
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start_command))
@@ -514,7 +518,7 @@ async def main_async():
             first=15
         )
 
-    logger.info("TeleDrive & WhatsApp Bridge Bot by iamemon13 starting...")
+    logger.info("TeleDrive & WhatsApp Bridge Bot by iamemon13 starting polling...")
 
     async with app:
         await app.initialize()
@@ -523,6 +527,5 @@ async def main_async():
         await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    keep_alive()  # ফ্লাস্ক সার্ভার, ওয়েব হুক এবং টেলিগ্রাম বট একসঙ্গে চালু রাখবে
     asyncio.run(main_async())
-                            
+    
