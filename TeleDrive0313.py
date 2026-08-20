@@ -84,7 +84,7 @@ def save_file_record(file_type, file_name, caption, thread_id, message_id, chann
         "channel_msg_id": channel_msg_id,
         "file_unique_id": file_unique_id,
         "encrypted": encrypted,
-        "backed_up": True,
+        "backed_up": False,  # <--- এখানে False করে দেওয়া হয়েছে যাতে ব্যাকআপ কমান্ড কাজ করে
         "date": datetime.now(BD_TIMEZONE).isoformat()
     }
     return files_col.insert_one(record)
@@ -127,15 +127,14 @@ async def perform_sequential_backup(bot):
         msg_id = item.get("message_id")
         if msg_id:
             try:
-                if not item.get("backed_up"):
-                    await bot.forward_message(
-                        chat_id=BACKUP_CHANNEL_ID,
-                        from_chat_id=GROUP_ID,
-                        message_id=msg_id
-                    )
-                    files_col.update_one({"_id": item["_id"]}, {"$set": {"backed_up": True}})
-                    count += 1
-                    await asyncio.sleep(1)
+                await bot.forward_message(
+                    chat_id=BACKUP_CHANNEL_ID,
+                    from_chat_id=GROUP_ID,
+                    message_id=msg_id
+                )
+                files_col.update_one({"_id": item["_id"]}, {"$set": {"backed_up": True}})
+                count += 1
+                await asyncio.sleep(1)
             except Exception as e:
                 files_col.update_one({"_id": item["_id"]}, {"$set": {"backed_up": True}})
                 logger.error(f"Failed to forward message id {msg_id}: {e}")
@@ -317,7 +316,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sent_channel_msg = await context.bot.send_video(chat_id=CHANNEL_ID, video=file_id, caption=new_caption)
             channel_msg_id = sent_channel_msg.message_id
         elif message.document:
-            sent_channel_msg = await context.bot.send_document(chat_id=CHANNEL_ID, document=file_id, caption=new_caption)
+            sent_channel_msg = await context.bot.send_document(chat_id=CHANNEL_ID, document=file_id, caption=new_keyword if 'new_keyword' in locals() else file_id, caption=new_caption)
             channel_msg_id = sent_channel_msg.message_id
         
         save_file_record(file_type, file_name, message.caption, target_thread, saved_message_id, channel_msg_id, file_unique_id)
