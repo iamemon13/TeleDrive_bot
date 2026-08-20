@@ -68,11 +68,10 @@ logger = logging.getLogger(__name__)
 # ============ DATABASE (MongoDB) ============
 
 client = MongoClient(MONGO_URI)
-db = client["teledrive_db"]
+db = client.get_database() # রেন্ডারের URI থেকে ডাটাবেস নাম স্বয়ংক্রিয়ভাবে নেবে
 files_col = db["files"]
 
 def save_file_record(file_type, file_name, caption, thread_id, message_id, channel_msg_id=None, encrypted=False):
-    # ডুপ্লিকেট চেক: যদি একই message_id ইতিমধ্যে ডাটাবেসে থাকে
     existing = files_col.find_one({"message_id": message_id})
     if existing:
         return existing
@@ -116,7 +115,6 @@ def cipher_text(text, key, decrypt=False):
 # ============ SEQUENTIAL BACKUP LOGIC (ধারাবাহিক ও ডুপ্লিকেট মুক্ত ব্যাকআপ) ============
 
 async def perform_sequential_backup(bot):
-    # যে ফাইলগুলোর ব্যাকআপ এখনো হয়নি (`backed_up: False` বা ফিল্ড নেই), সেগুলোকে পুরোনো থেকে নতুন ক্রমানুসারে ফেচ করবে
     pending_files = list(files_col.find(
         {"$or": [{"backed_up": {"$exists": False}}, {"backed_up": False}]}
     ).sort("_id", 1))
@@ -318,7 +316,7 @@ async def main_async():
     keep_alive()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     
-    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(handlers.CommandHandler("start", start_command) if 'handlers' in globals() else CommandHandler("start", start_command))
     app.add_handler(CommandHandler("search", search_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("backup_now", backup_now_command))
@@ -340,4 +338,3 @@ async def main_async():
 
 if __name__ == "__main__":
     asyncio.run(main_async())
-    
