@@ -35,10 +35,11 @@ GROUP_ID = int(os.environ["GROUP_ID"])
 CHANNEL_ID = int(os.environ["CHANNEL_ID"])
 BACKUP_CHANNEL_ID = int(os.environ["BACKUP_CHANNEL_ID"])
 
+# টপিক আইডিগুলো এখন পরিবেশগত ভেরিয়েবল থেকে রিড করবে
 TOPIC_IDS = {
-    "photo": 6,      # 📷 Photos topic id
-    "video": 7,      # 🎥 Videos topic id
-    "document": 12,  # 📄 Documents topic id
+    "photo": int(os.environ["TOPIC_PHOTO"]),      # 📷 Photos topic id
+    "video": int(os.environ["TOPIC_VIDEO"]),      # 🎥 Videos topic id
+    "document": int(os.environ["TOPIC_DOCUMENT"]),  # 📄 Documents topic id
 }
 
 BD_TIMEZONE = ZoneInfo("Asia/Dhaka")
@@ -289,7 +290,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     current_thread = message.message_thread_id
-    target_thread = TOPIC_IDS.get(file_type, 12)
+    target_thread = TOPIC_IDS.get(file_type, TOPIC_IDS["document"])
     
     saved_message_id = message.message_id
     new_caption = (message.caption or "") + f"\n\n#{file_type} #TeleDrive"
@@ -352,3 +353,4 @@ async def main_async():
 
 if __name__ == "__main__":
     asyncio.run(main_async())
+        
