@@ -84,7 +84,7 @@ def save_file_record(file_type, file_name, caption, thread_id, message_id, chann
         "channel_msg_id": channel_msg_id,
         "file_unique_id": file_unique_id,
         "encrypted": encrypted,
-        "backed_up": False,  # <--- এখানে False করে দেওয়া হয়েছে যাতে ব্যাকআপ কমান্ড কাজ করে
+        "backed_up": False,  # নতুন ফাইলের জন্য False রাখা হয়েছে যাতে ব্যাকআপ কমান্ড কাজ করে
         "date": datetime.now(BD_TIMEZONE).isoformat()
     }
     return files_col.insert_one(record)
@@ -316,7 +316,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sent_channel_msg = await context.bot.send_video(chat_id=CHANNEL_ID, video=file_id, caption=new_caption)
             channel_msg_id = sent_channel_msg.message_id
         elif message.document:
-            sent_channel_msg = await context.bot.send_document(chat_id=CHANNEL_ID, document=file_id, caption=new_keyword if 'new_keyword' in locals() else file_id, caption=new_caption)
+            sent_channel_msg = await context.bot.send_document(chat_id=CHANNEL_ID, document=file_id, caption=new_caption)
             channel_msg_id = sent_channel_msg.message_id
         
         save_file_record(file_type, file_name, message.caption, target_thread, saved_message_id, channel_msg_id, file_unique_id)
