@@ -9,6 +9,7 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from threading import Thread
 from urllib.parse import quote_plus
 from flask import Flask
@@ -39,6 +40,8 @@ TOPIC_IDS = {
     "video": 7,      # 🎥 Videos topic id
     "document": 12,  # 📄 Documents topic id
 }
+
+BD_TIMEZONE = ZoneInfo("Asia/Dhaka")
 
 # ============ RENDER KEEP ALIVE SERVER ============
 
@@ -71,11 +74,7 @@ client = MongoClient(MONGO_URI)
 db = client.get_database() # রেন্ডারের URI থেকে ডাটাবেস নাম স্বয়ংক্রিয়ভাবে নেবে
 files_col = db["files"]
 
-def save_file_record(file_type, file_name, caption, thread_id, message_id, channel_msg_id=None, encrypted=False):
-    existing = files_col.find_one({"message_id": message_id})
-    if existing:
-        return existing
-
+def save_file_record(file_type, file_name, caption, thread_id, message_id, channel_msg_id=None, file_unique_id=None, encrypted=False):
     record = {
         "file_type": file_type,
         "file_name": file_name or "",
@@ -83,9 +82,10 @@ def save_file_record(file_type, file_name, caption, thread_id, message_id, chann
         "thread_id": thread_id,
         "message_id": message_id,
         "channel_msg_id": channel_msg_id,
+        "file_unique_id": file_unique_id,
         "encrypted": encrypted,
-        "backed_up": False,
-        "date": datetime.now().isoformat()
+        "backed_up": True,
+        "date": datetime.now(BD_TIMEZONE).isoformat()
     }
     return files_col.insert_one(record)
 
@@ -253,15 +253,23 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     file_type = "document"
     file_name = ""
+    file_unique_id = None
+    file_id = None
 
     if message.photo:
         file_type = "photo"
         file_name = f"photo_{message.message_id}.jpg"
+        file_id = message.photo[-1].file_id
+        file_unique_id = message.photo[-1].file_unique_id
     elif message.video:
         file_type = "video"
         file_name = f"video_{message.message_id}.mp4"
+        file_id = message.video.file_id
+        file_unique_id = message.video.file_unique_id
     elif message.document:
         file_name = message.document.file_name or "document"
+        file_id = message.document.file_id
+        file_unique_id = message.document.file_unique_id
         ext = file_name.split('.')[-1].lower() if '.' in file_name else ''
         
         if ext in ['jpg', 'jpeg', 'png', 'webp']:
@@ -270,6 +278,16 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             file_type = "video"
         else:
             file_type = "document"
+
+    # ডুপ্লিকেট চেক (যদি file_unique_id আগে থেকেই ডাটাবেসে থাকে)
+    if file_unique_id:
+        existing_file = files_col.find_one({"file_unique_id": file_unique_id})
+        if existing_file:
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            return
 
     current_thread = message.message_thread_id
     target_thread = TOPIC_IDS.get(file_type, 12)
@@ -293,22 +311,19 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     channel_msg_id = None
     try:
         if message.photo:
-            file_id = message.photo[-1].file_id
             sent_channel_msg = await context.bot.send_photo(chat_id=CHANNEL_ID, photo=file_id, caption=new_caption)
             channel_msg_id = sent_channel_msg.message_id
         elif message.video:
-            file_id = message.video.file_id
             sent_channel_msg = await context.bot.send_video(chat_id=CHANNEL_ID, video=file_id, caption=new_caption)
             channel_msg_id = sent_channel_msg.message_id
         elif message.document:
-            file_id = message.document.file_id
             sent_channel_msg = await context.bot.send_document(chat_id=CHANNEL_ID, document=file_id, caption=new_caption)
             channel_msg_id = sent_channel_msg.message_id
         
-        save_file_record(file_type, file_name, message.caption, target_thread, saved_message_id, channel_msg_id)
+        save_file_record(file_type, file_name, message.caption, target_thread, saved_message_id, channel_msg_id, file_unique_id)
     except Exception as e:
         logger.error(f"Failed to save to backup channel: {e}")
-        save_file_record(file_type, file_name, message.caption, target_thread, saved_message_id)
+        save_file_record(file_type, file_name, message.caption, target_thread, saved_message_id, file_unique_id=file_unique_id)
 
 # ============ MAIN ============
 
@@ -316,7 +331,7 @@ async def main_async():
     keep_alive()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     
-    app.add_handler(handlers.CommandHandler("start", start_command) if 'handlers' in globals() else CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("search", search_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("backup_now", backup_now_command))
